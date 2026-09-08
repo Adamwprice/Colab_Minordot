@@ -1,0 +1,6 @@
+res://scripts/battle.gd
+res://scripts/game_state.gd
+res://scripts/resource_manager.gd
+res://scripts/ui.gd
+res://scenes/Main.tscn
+res://scripts/drone.gd
