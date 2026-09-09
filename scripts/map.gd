@@ -9,14 +9,58 @@ var dragging: bool = false
 var drag_last: Vector2 = Vector2.ZERO
 
 var selected: Node = null
+var refinery_marker: Node2D = null
 
 func _ready():
+	_build_refinery_marker()
 	set_process(true)
 	queue_redraw()
 
 func _process(delta):
 	# refresh visuals each frame (cheap for prototype)
+	_update_refinery_marker()
+	_update_selection_label()
 	queue_redraw()
+
+func _build_refinery_marker() -> void:
+	refinery_marker = Node2D.new()
+	refinery_marker.name = "RefineryMarker"
+	refinery_marker.z_index = 50
+	refinery_marker.visible = false
+	add_child(refinery_marker)
+
+	var glow = Polygon2D.new()
+	glow.polygon = PackedVector2Array([Vector2(0, -18), Vector2(18, 0), Vector2(0, 18), Vector2(-18, 0)])
+	glow.color = Color(0.24, 0.71, 0.54, 0.18)
+	refinery_marker.add_child(glow)
+
+	var body = Polygon2D.new()
+	body.polygon = PackedVector2Array([Vector2(0, -13), Vector2(13, 0), Vector2(0, 13), Vector2(-13, 0)])
+	body.color = Color("3eb489")
+	refinery_marker.add_child(body)
+
+	var outline = Line2D.new()
+	outline.points = PackedVector2Array([Vector2(0, -13), Vector2(13, 0), Vector2(0, 13), Vector2(-13, 0), Vector2(0, -13)])
+	outline.default_color = Color("baf7df")
+	outline.width = 2.0
+	refinery_marker.add_child(outline)
+
+	var core = Polygon2D.new()
+	core.polygon = PackedVector2Array([Vector2(0, -4), Vector2(4, 0), Vector2(0, 4), Vector2(-4, 0)])
+	core.color = Color("e8fff6")
+	refinery_marker.add_child(core)
+
+func _update_refinery_marker() -> void:
+	if refinery_marker == null:
+		return
+	var game_state = get_node_or_null("/root/GameState")
+	var unlocked = game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery")
+	refinery_marker.visible = unlocked
+	if not unlocked:
+		return
+	var flagship = get_tree().get_first_node_in_group("flotilla")
+	if flagship:
+		refinery_marker.position = size * 0.5 + (flagship.position * world_scale) + pan + Vector2(38.0, -30.0)
 
 func _draw():
 	var cur_scene = get_tree().get_current_scene()
@@ -61,7 +105,7 @@ func _draw():
 				draw_circle(mpos, radius + 3, Color(0.9, 0.46, 0.2, 0.08))
 				draw_circle(mpos, radius, col)
 				draw_circle(mpos - Vector2(radius * 0.3, radius * 0.25), radius * 0.25, Color(1, 0.82, 0.5, 0.55))
-				draw_string(ThemeDB.fallback_font, mpos + Vector2(-28, -radius - 8), "%d/%d" % [a.resource_amount, a.max_resource_amount], HORIZONTAL_ALIGNMENT_CENTER, 50, 12, Color("d9f4ff"))
+				draw_string(ThemeDB.fallback_font, mpos + Vector2(-28, -radius - 8), "%d" % int(a.resource_amount), HORIZONTAL_ALIGNMENT_CENTER, 50, 12, Color("d9f4ff"))
 				if a == selected:
 					draw_arc(mpos, radius + 7, 0, TAU, 32, Color("5ee7ff"), 2.0)
 		# draw flotilla
@@ -153,7 +197,10 @@ func _update_selection_label():
 		lbl = Label.new()
 		lbl.name = "Label"
 		add_child(lbl)
-		lbl.position = Vector2(18, size.y - 26)
+		lbl.add_theme_color_override("font_color", Color("d9f4ff"))
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.size = Vector2(max(1.0, size.x - 36.0), 42.0)
+	lbl.position = _clamp_selection_label_position(lbl.size)
 	if selected != null and not is_instance_valid(selected):
 		selected = null
 	if selected == null:
@@ -167,3 +214,10 @@ func _update_selection_label():
 			lbl.text = "Flagship - stored: %d" % int(selected.storage)
 		else:
 			lbl.text = "Entity"
+
+func _clamp_selection_label_position(label_size: Vector2) -> Vector2:
+	var margin = 18.0
+	var target = Vector2(margin, size.y - label_size.y - margin)
+	var max_x = max(margin, size.x - label_size.x - margin)
+	var max_y = max(margin, size.y - label_size.y - margin)
+	return Vector2(clamp(target.x, margin, max_x), clamp(target.y, margin, max_y))

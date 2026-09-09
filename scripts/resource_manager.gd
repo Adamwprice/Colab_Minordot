@@ -13,12 +13,22 @@ var click_output_level: int = 0
 var click_multiplier_level: int = 0
 var speed_level: int = 0
 var mining_level: int = 0
+var mining_speed_level: int = 0
 var drone_multiplier_level: int = 0
 var capacity_level: int = 0
 var drone_level: int = 0
 var flagship_speed_level: int = 0
+var refinery_upgrade_levels := {
+	"command_capacity": 0,
+	"click_multiplier": 0,
+	"hull": 0,
+	"armor": 0,
+	"shield": 0,
+	"global_income_bonus": 0
+}
 var asteroid_field_level: int = 0
 var next_stage_timer: float = -1.0
+var last_click_time: float = -1.0
 var rng := RandomNumberGenerator.new()
 var asteroid_priority := {} # maps Node -> int priority
 var _sort_target: Node = null
@@ -28,6 +38,7 @@ const PLANET_MIN_COUNT := 0
 const PLANET_MAX_COUNT := 2
 const ASTEROID_MIN_COUNT := 4
 const ASTEROID_MAX_COUNT := 10
+const FIELD_RESOURCE_CAP := 5000
 const PLANET_MIN_DISTANCE_FROM_SUN := 100.0
 const ASTEROID_MIN_DISTANCE_FROM_SUN := 1000.0
 const PLANET_SEPARATION := 100.0
@@ -38,15 +49,17 @@ const SPAWN_FALLBACK_EXTRA_RADIUS := 700.0
 
 const BASE_SPEED := 50.0
 const BASE_MINING_AMOUNT := 1
+const BASE_MINING_SPEED := 1.0
 const BASE_CAPACITY := 10
 const BASE_DRONE_CAP := 0
 const BASE_CLICK_OUTPUT := 1
-const BASE_CLICK_MULTIPLIER := 1.0
+const BASE_CLICK_RATE_CAP := 10
 const BASE_FLAGSHIP_SPEED := 60.0
 const CLICK_OUTPUT_PER_LEVEL := 1
-const CLICK_MULTIPLIER_PER_LEVEL := 0.025
+const CLICK_RATE_CAP_PER_LEVEL := 1
 const FLAGSHIP_SPEED_PER_LEVEL := 10.0
 const MINING_AMOUNT_PER_LEVEL := 1
+const MINING_SPEED_PER_LEVEL := 0.1
 const DRONE_MULTIPLIER_PER_LEVEL := 0.25
 const DRONE_CAPACITY_PER_LEVEL := 1
 const CARRY_CAPACITY_PER_LEVEL := 10
@@ -60,9 +73,18 @@ const ORE_UPGRADE_BASE_COSTS := {
 	"drones": 750,
 	"flagship_speed": 25,
 	"mining": 100,
+	"mining_speed": 150,
 	"drone_multiplier": 1750,
 	"capacity": 75,
 	"speed": 10
+}
+const REFINERY_ORE_BASE_COSTS := {
+	"command_capacity": 750,
+	"click_multiplier": 1000,
+	"hull": 500,
+	"armor": 700,
+	"shield": 700,
+	"global_income_bonus": 2500
 }
 
 func _ready():
@@ -91,11 +113,13 @@ func get_run_state() -> Dictionary:
 			"click_multiplier": click_multiplier_level,
 			"speed": speed_level,
 			"mining": mining_level,
+			"mining_speed": mining_speed_level,
 			"drone_multiplier": drone_multiplier_level,
 			"capacity": capacity_level,
 			"drones": drone_level,
 			"flagship_speed": flagship_speed_level
 		},
+		"refinery_upgrades": refinery_upgrade_levels.duplicate(true),
 		"asteroid_field_level": asteroid_field_level,
 		"drone_count": drone_count,
 		"click_damage": get_click_output(),
@@ -110,10 +134,14 @@ func apply_run_state(state: Dictionary, active_drone_override: int = -1) -> void
 	click_multiplier_level = int(upgrades.get("click_multiplier", click_multiplier_level))
 	speed_level = int(upgrades.get("speed", speed_level))
 	mining_level = int(upgrades.get("mining", mining_level))
+	mining_speed_level = int(upgrades.get("mining_speed", mining_speed_level))
 	drone_multiplier_level = int(upgrades.get("drone_multiplier", drone_multiplier_level))
 	capacity_level = int(upgrades.get("capacity", capacity_level))
 	drone_level = int(upgrades.get("drones", drone_level))
 	flagship_speed_level = int(upgrades.get("flagship_speed", flagship_speed_level))
+	var saved_refinery_upgrades: Dictionary = state.get("refinery_upgrades", {})
+	for stat_key in refinery_upgrade_levels:
+		refinery_upgrade_levels[stat_key] = max(0, int(saved_refinery_upgrades.get(stat_key, refinery_upgrade_levels[stat_key])))
 	asteroid_field_level = int(state.get("asteroid_field_level", asteroid_field_level))
 	total_resources = float(state.get("total_resources", total_resources))
 	if flotilla and is_instance_valid(flotilla):
@@ -137,19 +165,23 @@ func can_enter_battle() -> bool:
 func advance_field_after_battle() -> void:
 	regenerate_asteroid_field()
 
-func reset_run_for_prestige(surviving_drones: int = 0, update_game_state: bool = true) -> void:
+func reset_run_for_prestige(surviving_drones: int = 0, update_game_state: bool = true) -> bool:
 	var game_state = get_node_or_null("/root/GameState")
 	if update_game_state and game_state and game_state.has_method("reset_for_prestige"):
-		game_state.reset_for_prestige()
+		if not bool(game_state.reset_for_prestige()):
+			return false
 	total_resources = 0
 	click_output_level = 0
 	click_multiplier_level = 0
 	speed_level = 0
 	mining_level = 0
+	mining_speed_level = 0
 	drone_multiplier_level = 0
 	capacity_level = 0
 	drone_level = max(0, surviving_drones)
 	flagship_speed_level = 0
+	for stat_key in refinery_upgrade_levels:
+		refinery_upgrade_levels[stat_key] = 0
 	asteroid_field_level = 0
 	next_stage_timer = -1.0
 	if flotilla and is_instance_valid(flotilla):
@@ -166,6 +198,7 @@ func reset_run_for_prestige(surviving_drones: int = 0, update_game_state: bool =
 	spawn_resource_field()
 	emit_signal("resource_changed", total_resources)
 	emit_signal("upgrades_changed")
+	return true
 
 func start_battle() -> bool:
 	if not can_enter_battle():
@@ -179,12 +212,30 @@ func start_battle() -> bool:
 	var boss_tier = int(game_state.boss_tier)
 	if game_state.has_method("get_effective_boss_tier"):
 		boss_tier = int(game_state.get_effective_boss_tier())
+	var flagship_max_hp = 100
+	var flagship_armor = 0
+	var flagship_shield = 0.0
+	if game_state.has_method("get_flagship_max_hp"):
+		flagship_max_hp = int(game_state.get_flagship_max_hp())
+	if game_state.has_method("get_flagship_armor_reduction"):
+		flagship_armor = int(game_state.get_flagship_armor_reduction())
+	if game_state.has_method("get_flagship_shield_reduction"):
+		flagship_shield = float(game_state.get_flagship_shield_reduction())
+	var refinery_unlocked = game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery")
 	var battle_stats = {
 		"click_damage": get_click_output(),
+		"click_rate_cap": get_click_rate_cap(),
 		"mining_amount": get_mining_amount(),
 		"drone_count": parent.get_node("Drones").get_child_count() if parent.has_node("Drones") else 0,
 		"field_level": asteroid_field_level + 1,
-		"boss_tier": boss_tier
+		"boss_tier": boss_tier,
+		"flagship_max_hp": flagship_max_hp,
+		"flagship_armor": flagship_armor,
+		"flagship_shield": flagship_shield,
+		"refinery_unlocked": refinery_unlocked,
+		"refinery_max_hp": int(get_refinery_stat_value("hull")),
+		"refinery_armor": int(get_refinery_stat_value("armor")),
+		"refinery_shield": float(get_refinery_stat_value("shield"))
 	}
 	game_state.prepare_battle(get_run_state(), battle_stats)
 	get_tree().change_scene_to_file("res://scenes/Battle.tscn")
@@ -274,10 +325,25 @@ func spawn_asteroids(count: int = -1) -> void:
 		container.add_child(a)
 		var spawn_position = _find_spawn_position(blockers, ASTEROID_SEPARATION, ASTEROID_MIN_DISTANCE_FROM_SUN)
 		a.position = spawn_position
-		a.max_resource_amount = 250 #+ asteroid_field_level * 0#
+		a.max_resource_amount = 0
 		a.resource_amount = a.max_resource_amount
 		a.add_to_group("asteroids")
 		blockers.append(spawn_position)
+	_distribute_field_resources(container)
+
+func _distribute_field_resources(container: Node) -> void:
+	var resource_nodes: Array[Node] = []
+	for node in container.get_children():
+		if node.is_in_group("asteroids") and not node.is_in_group("sun"):
+			resource_nodes.append(node)
+	if resource_nodes.is_empty():
+		return
+	var resources_per_node = int(floor(float(FIELD_RESOURCE_CAP) / float(resource_nodes.size())))
+	var remainder = FIELD_RESOURCE_CAP % resource_nodes.size()
+	for index in range(resource_nodes.size()):
+		var node_resources = resources_per_node + (1 if index < remainder else 0)
+		resource_nodes[index].max_resource_amount = node_resources
+		resource_nodes[index].resource_amount = node_resources
 
 func spawn_planets(count: int = -1) -> void:
 	var container = get_parent().get_node_or_null("Asteroids")
@@ -302,8 +368,8 @@ func spawn_planets(count: int = -1) -> void:
 		container.add_child(planet)
 		var planet_position = _find_spawn_position(blockers, PLANET_SEPARATION, PLANET_MIN_DISTANCE_FROM_SUN)
 		planet.position = planet_position
-		planet.max_resource_amount = 1000
-		planet.resource_amount = 1000
+		planet.max_resource_amount = 0
+		planet.resource_amount = planet.max_resource_amount
 		planet.add_to_group("asteroids")
 		planet.add_to_group("planet")
 		blockers.append(planet_position)
@@ -329,7 +395,84 @@ func get_click_output() -> int:
 	return BASE_CLICK_OUTPUT + click_output_level * CLICK_OUTPUT_PER_LEVEL
 
 func get_click_multiplier() -> float:
-	return BASE_CLICK_MULTIPLIER + click_multiplier_level * CLICK_MULTIPLIER_PER_LEVEL
+	return 1.0
+
+func get_global_ore_multiplier() -> float:
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery"):
+		return 1.0 + float(get_refinery_stat_value("global_income_bonus"))
+	return 1.0
+
+func get_refinery_upgrade_level(stat_key: String) -> int:
+	return int(refinery_upgrade_levels.get(stat_key, 0))
+
+func get_refinery_upgrade_cap(stat_key: String) -> int:
+	return get_ore_upgrade_cap("refinery_%s" % stat_key)
+
+func get_refinery_upgrade_cost(stat_key: String, level: int = -1) -> int:
+	if not REFINERY_ORE_BASE_COSTS.has(stat_key):
+		return 0
+	if level < 0:
+		level = get_refinery_upgrade_level(stat_key)
+	return int(ceil(float(REFINERY_ORE_BASE_COSTS[stat_key]) * pow(ORE_COST_MULTIPLIER, float(level))))
+
+func get_refinery_stat_value(stat_key: String):
+	var level = get_refinery_upgrade_level(stat_key)
+	match stat_key:
+		"command_capacity":
+			return level
+		"click_multiplier":
+			return 1.0 + float(level) * 0.025
+		"hull":
+			return max(1, int(round(100.0 * pow(1.5, float(level)))))
+		"armor":
+			return level * 2
+		"shield":
+			return min(0.8, float(level) * 0.05)
+		"global_income_bonus":
+			return 0.012 * float(level + 1)
+	return 0
+
+func get_refinery_click_multiplier() -> float:
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery"):
+		return float(get_refinery_stat_value("click_multiplier"))
+	return 1.0
+
+func upgrade_refinery_stat(stat_key: String) -> bool:
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state == null or not game_state.has_method("is_ship_unlocked") or not game_state.is_ship_unlocked("refinery"):
+		return false
+	if not refinery_upgrade_levels.has(stat_key):
+		return false
+	var level = get_refinery_upgrade_level(stat_key)
+	if level >= get_refinery_upgrade_cap(stat_key):
+		return false
+	var cost = get_refinery_upgrade_cost(stat_key, level)
+	if total_resources < cost:
+		return false
+	total_resources -= cost
+	refinery_upgrade_levels[stat_key] = level + 1
+	if flotilla and is_instance_valid(flotilla):
+		flotilla.storage = total_resources
+	var parent = get_parent()
+	if parent and parent.has_node("Drones"):
+		for drone in parent.get_node("Drones").get_children():
+			configure_drone(drone)
+	emit_signal("resource_changed", total_resources)
+	emit_signal("upgrades_changed")
+	return true
+
+func get_click_rate_cap() -> float:
+	return float(BASE_CLICK_RATE_CAP + click_multiplier_level * CLICK_RATE_CAP_PER_LEVEL)
+
+func _try_consume_click() -> bool:
+	var now = float(Time.get_ticks_usec()) / 1000000.0
+	var minimum_interval = 1.0 / max(1.0, get_click_rate_cap())
+	if last_click_time >= 0.0 and now - last_click_time < minimum_interval:
+		return false
+	last_click_time = now
+	return true
 
 func get_speed() -> float:
 	var speed = BASE_SPEED + speed_level * DRONE_SPEED_PER_LEVEL
@@ -368,6 +511,12 @@ func get_mining_amount() -> int:
 			amount *= 2
 	return amount
 
+func get_mining_speed() -> float:
+	return BASE_MINING_SPEED + mining_speed_level * MINING_SPEED_PER_LEVEL
+
+func get_mining_interval() -> float:
+	return 1.0 / max(0.1, get_mining_speed())
+
 func get_drone_multiplier() -> float:
 	return 1.0 + drone_multiplier_level * DRONE_MULTIPLIER_PER_LEVEL
 
@@ -379,7 +528,8 @@ func configure_drone(drone: Node) -> void:
 		return
 	drone.speed = get_speed()
 	drone.mining_amount = get_mining_amount()
-	drone.mining_reward_multiplier = get_drone_multiplier()
+	drone.mine_interval = get_mining_interval()
+	drone.mining_reward_multiplier = get_drone_multiplier() * get_global_ore_multiplier()
 	drone.carry_capacity = get_capacity()
 
 func regenerate_asteroid_field(count: int = -1) -> void:
@@ -449,6 +599,9 @@ func upgrade_click_multiplier() -> bool:
 func upgrade_mining() -> bool:
 	return _buy_upgrade("mining")
 
+func upgrade_mining_speed() -> bool:
+	return _buy_upgrade("mining_speed")
+
 func upgrade_drone_multiplier() -> bool:
 	return _buy_upgrade("drone_multiplier")
 
@@ -486,13 +639,25 @@ func _on_flotilla_deposited(amount):
 	total_resources = float(amount)
 	emit_signal("resource_changed", total_resources)
 
+func add_resources(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	total_resources += amount
+	if flotilla and is_instance_valid(flotilla):
+		flotilla.storage = total_resources
+	emit_signal("resource_changed", total_resources)
+
 func click_mine(asteroid: Node) -> float:
 	if asteroid == null or not is_instance_valid(asteroid):
+		return 0
+	if int(asteroid.resource_amount) <= 0:
+		return 0
+	if not _try_consume_click():
 		return 0
 	var harvested = asteroid.mine(get_click_output())
 	if harvested <= 0:
 		return 0
-	var gained = float(harvested) * get_click_multiplier()
+	var gained = float(harvested) * get_refinery_click_multiplier() * get_global_ore_multiplier()
 	total_resources += gained
 	if flotilla and is_instance_valid(flotilla):
 		flotilla.storage = total_resources
@@ -620,7 +785,8 @@ func save_game() -> void:
 
 	var state = {
 		"flotilla": {"storage": flotilla.storage if flotilla else 0, "position": [flotilla.position.x, flotilla.position.y] if flotilla else [0,0]},
-		"upgrades": {"click_output": click_output_level, "click_multiplier": click_multiplier_level, "speed": speed_level, "mining": mining_level, "drone_multiplier": drone_multiplier_level, "capacity": capacity_level, "drones": drone_level, "flagship_speed": flagship_speed_level},
+		"upgrades": {"click_output": click_output_level, "click_multiplier": click_multiplier_level, "speed": speed_level, "mining": mining_level, "mining_speed": mining_speed_level, "drone_multiplier": drone_multiplier_level, "capacity": capacity_level, "drones": drone_level, "flagship_speed": flagship_speed_level},
+		"refinery_upgrades": refinery_upgrade_levels.duplicate(true),
 		"asteroid_field_level": asteroid_field_level,
 		"research": {},
 		"asteroids": [],
@@ -684,9 +850,13 @@ func load_game() -> void:
 	configure_flagship()
 	speed_level = int(saved_upgrades.get("speed", 0))
 	mining_level = int(saved_upgrades.get("mining", 0))
+	mining_speed_level = int(saved_upgrades.get("mining_speed", 0))
 	drone_multiplier_level = int(saved_upgrades.get("drone_multiplier", 0))
 	capacity_level = int(saved_upgrades.get("capacity", 0))
 	drone_level = int(saved_upgrades.get("drones", 0))
+	var saved_refinery_upgrades: Dictionary = state.get("refinery_upgrades", {})
+	for stat_key in refinery_upgrade_levels:
+		refinery_upgrade_levels[stat_key] = max(0, int(saved_refinery_upgrades.get(stat_key, 0)))
 	if flotilla and saved_flotilla.has("storage"):
 		flotilla.storage = float(saved_flotilla["storage"])
 		total_resources = flotilla.storage
