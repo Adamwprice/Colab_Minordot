@@ -10,15 +10,20 @@ var drag_last: Vector2 = Vector2.ZERO
 
 var selected: Node = null
 var refinery_marker: Node2D = null
+var ship_markers := {}
+var held_mine_target: Node = null
 
 func _ready():
 	_build_refinery_marker()
+	_build_capital_ship_markers()
 	set_process(true)
 	queue_redraw()
 
 func _process(delta):
 	# refresh visuals each frame (cheap for prototype)
+	_update_held_mining()
 	_update_refinery_marker()
+	_update_capital_ship_markers()
 	_update_selection_label()
 	queue_redraw()
 
@@ -55,12 +60,53 @@ func _update_refinery_marker() -> void:
 		return
 	var game_state = get_node_or_null("/root/GameState")
 	var unlocked = game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery")
-	refinery_marker.visible = unlocked
-	if not unlocked:
+	var overlay_open := false
+	var ui_layer = get_parent()
+	if ui_layer and ui_layer.has_method("_has_open_research_overlay"):
+		overlay_open = bool(ui_layer.call("_has_open_research_overlay"))
+	refinery_marker.visible = unlocked and not overlay_open
+	if not refinery_marker.visible:
 		return
 	var flagship = get_tree().get_first_node_in_group("flotilla")
 	if flagship:
 		refinery_marker.position = size * 0.5 + (flagship.position * world_scale) + pan + Vector2(38.0, -30.0)
+
+func _build_capital_ship_markers() -> void:
+	var marker_data = {
+		"hammond": {"offset": Vector2(-42.0, -30.0), "color": Color("d65b5b"), "shape": PackedVector2Array([Vector2(-18, -8), Vector2(18, -8), Vector2(18, 8), Vector2(-18, 8)])},
+		"drone_carrier": {"offset": Vector2(-72.0, 18.0), "color": Color("8d78d6"), "shape": PackedVector2Array([Vector2(-22, 0), Vector2(-10, -11), Vector2(20, -7), Vector2(20, 7), Vector2(-10, 11)])}
+	}
+	for ship_key in marker_data:
+		var data: Dictionary = marker_data[ship_key]
+		var marker = Node2D.new()
+		marker.name = "%sMarker" % str(ship_key).to_pascal_case()
+		marker.z_index = 49
+		marker.visible = false
+		add_child(marker)
+		var body = Polygon2D.new()
+		body.polygon = data["shape"]
+		body.color = data["color"]
+		marker.add_child(body)
+		var outline = Line2D.new()
+		var outline_points: PackedVector2Array = data["shape"].duplicate()
+		outline_points.append(outline_points[0])
+		outline.points = outline_points
+		outline.default_color = Color("f4efff")
+		outline.width = 2.0
+		marker.add_child(outline)
+		ship_markers[ship_key] = {"node": marker, "offset": data["offset"]}
+
+func _update_capital_ship_markers() -> void:
+	var game_state = get_node_or_null("/root/GameState")
+	var ui_layer = get_parent()
+	var overlay_open = ui_layer and ui_layer.has_method("_has_open_research_overlay") and bool(ui_layer.call("_has_open_research_overlay"))
+	var flagship = get_tree().get_first_node_in_group("flotilla")
+	for ship_key in ship_markers:
+		var marker_data: Dictionary = ship_markers[ship_key]
+		var marker = marker_data["node"] as Node2D
+		marker.visible = game_state and game_state.is_ship_unlocked(ship_key) and not overlay_open
+		if marker.visible and flagship:
+			marker.position = size * 0.5 + (flagship.position * world_scale) + pan + marker_data["offset"]
 
 func _draw():
 	var cur_scene = get_tree().get_current_scene()
@@ -132,16 +178,14 @@ func _draw():
 func _gui_input(event):
 	if event is InputEventMouseButton:
 		# Mouse button indices: LEFT=1, RIGHT=2, WHEEL_UP=4, WHEEL_DOWN=5
-		if event.button_index == 1 and event.pressed: # LEFT
-			# select nearest entity
-			var pos = event.position
-			var found = _pick_entity(pos)
-			selected = found
-			if selected and selected.is_in_group("asteroids"):
-				var rm = get_tree().get_current_scene().get_node("ResourceManager")
-				if rm and rm.has_method("click_mine"):
-					rm.click_mine(selected)
-			_update_selection_label()
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				selected = _pick_entity(event.position)
+				held_mine_target = selected if selected and selected.is_in_group("asteroids") and not selected.is_in_group("sun") else null
+				_mine_held_target()
+				_update_selection_label()
+			else:
+				held_mine_target = null
 		elif event.button_index == 2 and event.pressed: # RIGHT
 			var flagship = get_tree().get_first_node_in_group("flotilla")
 			if flagship and flagship.has_method("move_to"):
@@ -154,6 +198,30 @@ func _gui_input(event):
 		# Middle-drag pans; right-click is reserved for flagship movement orders.
 		if Input.is_mouse_button_pressed(3): # MIDDLE
 			pan += event.relative
+
+func _update_held_mining() -> void:
+	if held_mine_target == null:
+		return
+	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		held_mine_target = null
+		return
+	var ui_layer = get_parent()
+	if ui_layer and ui_layer.has_method("_has_open_research_overlay") and bool(ui_layer.call("_has_open_research_overlay")):
+		held_mine_target = null
+		return
+	_mine_held_target()
+
+func _mine_held_target() -> void:
+	if held_mine_target == null or not is_instance_valid(held_mine_target):
+		held_mine_target = null
+		return
+	if not held_mine_target.is_in_group("asteroids") or held_mine_target.is_in_group("sun") or int(held_mine_target.resource_amount) <= 0:
+		held_mine_target = null
+		return
+	var current_scene = get_tree().get_current_scene()
+	var resource_manager = current_scene.get_node_or_null("ResourceManager") if current_scene else null
+	if resource_manager and resource_manager.has_method("click_mine"):
+		resource_manager.click_mine(held_mine_target)
 
 func _pick_entity(screen_pos: Vector2):
 	var center = size * 0.5

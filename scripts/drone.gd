@@ -3,6 +3,8 @@ extends Node2D
 enum State { IDLE, TO_ASTEROID, MINING, TO_FLOTILLA }
 var state = State.IDLE
 
+@export var ship_profile: ShipProfile
+
 var speed: float = 50.0
 var carry_capacity: int = 10
 var mining_amount: int = 1
@@ -100,3 +102,6 @@ func assign_target(target: Node) -> void:
 	target_asteroid = target
 	flotilla = null
 	state = State.TO_ASTEROID
+
+func get_ship_profile() -> ShipProfile:
+	return ship_profile

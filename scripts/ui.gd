@@ -39,6 +39,7 @@ var dev_panel: Panel = null
 var dev_label: Label = null
 var dev_add_ore_button: Button = null
 var dev_add_research_button: Button = null
+var dev_prestige_button: Button = null
 var technology_button: Button = null
 var research_button: Button = null
 var prestige_toggle_button: Button = null
@@ -50,13 +51,17 @@ var research_toggle_button: Button = null
 var research_points_label: Label = null
 var research_tab_button: Button = null
 var rewards_tab_button: Button = null
-var research_prestige_button: Button = null
+var hunt_research_button: Button = null
+var research_scroll_container: ScrollContainer = null
+var rewards_scroll_container: ScrollContainer = null
+var research_scroll_content: Control = null
+var rewards_scroll_content: Control = null
 var research_upgrade_tiles: Array = []
 var research_row_controls: Array[Control] = []
 var research_ship_lock_labels := {}
 var reward_controls: Array[Control] = []
-var reward_refinery_status_label: Label = null
-var reward_refinery_claim_button: Button = null
+var reward_entries := {}
+var prestige_boss_levels: Array[int] = []
 var technology_column_headers: Array[Label] = []
 var technology_column_items: Array[Label] = []
 var technology_column_separators: Array[ColorRect] = []
@@ -79,6 +84,8 @@ var refinery_upgrade_buttons: Array[Button] = []
 var refinery_separators: Array[Control] = []
 var refinery_level_texts: Array[Label] = []
 var refinery_effect_texts: Array[Label] = []
+var ship_upgrade_huds := {}
+var ship_upgrades_visible := {"hammond": false, "drone_carrier": false}
 var prestige_separators: Array[Control] = []
 var action_timer: Timer = null
 var player_upgrades_visible: bool = true
@@ -105,16 +112,37 @@ const RIGHT_UPGRADE_EFFECT_X := 262.0
 const RIGHT_UPGRADE_HEADER_HEIGHT := 38.0
 const RIGHT_UPGRADE_FLAGSHIP_HEIGHT := 158.0
 const RIGHT_UPGRADE_DRONE_HEIGHT := 198.0
-const RIGHT_UPGRADE_REFINERY_HEIGHT := 228.0
+const RIGHT_UPGRADE_REFINERY_HEIGHT := 158.0
 const RIGHT_UPGRADE_SECTION_GAP := 16.0
 const REFINERY_HUD_UPGRADES := [
 	{"label": "COMMAND CAP", "stat_key": "command_capacity"},
+	{"label": "CLICK RATE", "stat_key": "click_rate"},
 	{"label": "CLICK MULT", "stat_key": "click_multiplier"},
-	{"label": "HULL", "stat_key": "hull"},
-	{"label": "ARMOR", "stat_key": "armor"},
-	{"label": "SHIELD", "stat_key": "shield"},
 	{"label": "GLOBAL BONUS", "stat_key": "global_income_bonus"}
 ]
+const SHIP_HUD_UPGRADES := {
+	"hammond": {
+		"title": "HAMMOND UPGRADES",
+		"color": Color("e88a83"),
+		"rows": [
+			{"label": "COMMAND CAP", "stat_key": "command_capacity"},
+			{"label": "CLICK RATE", "stat_key": "click_rate"},
+			{"label": "AUTOCANNON", "stat_key": "autocannon"},
+			{"label": "AMMO CONVEYOR", "stat_key": "ammo_conveyor"},
+			{"label": "TORPEDO", "stat_key": "torpedo"}
+		]
+	},
+	"drone_carrier": {
+		"title": "DRONE CARRIER UPGRADES",
+		"color": Color("b9a6ff"),
+		"rows": [
+			{"label": "COMMAND CAP", "stat_key": "command_capacity"},
+			{"label": "CLICK RATE", "stat_key": "click_rate"},
+			{"label": "COORDINATION", "stat_key": "drone_coordination"},
+			{"label": "FIGHTER DRONES", "stat_key": "fighter_drones"}
+		]
+	}
+}
 const CAP_RESEARCH_DESCRIPTIONS := [
 	"Raises the maximum Click Amount level by 1.",
 	"Raises the maximum accepted clicks per second by 1.",
@@ -128,75 +156,84 @@ const CAP_RESEARCH_DESCRIPTIONS := [
 ]
 const PASSIVE_RESEARCH_DISPLAY := [
 	{
+		"label": "READINESS",
+		"name": "Readiness",
+		"key": "flagship_readiness",
+		"description": "Permanent boon: begin every run at Command Capacity level 1."
+	},
+	{
+		"label": "FLAGSHIP THRUSTERS",
+		"name": "Flagship thrusters",
+		"key": "flagship_ion_thrusters",
+		"description": "Permanent boon: multiplies flagship speed by 1.5."
+	},
+	{
+		"label": "RAILGUN",
+		"name": "Railgun",
+		"key": "flagship_railgun",
+		"description": "Permanent boon: adds 10 click damage against battle enemies only."
+	},
+	{
 		"label": "MINING LASERS",
 		"name": "Mining lasers",
 		"key": "drone_mining_lasers",
 		"description": "Permanent boon: doubles drone mining amount."
 	},
 	{
-		"label": "ION THRUSTERS",
-		"name": "Ion thrusters",
+		"label": "DRONE THRUSTERS",
+		"name": "Drone thrusters",
 		"key": "drone_ion_thrusts",
 		"description": "Permanent boon: multiplies drone speed by 3."
-	},
-	{
-		"label": "FLAGSHIP HULL",
-		"name": "Flagship Hull",
-		"key": "flagship_hull",
-		"description": "Permanent upgrade: multiplies flagship HP by 1.5 per level."
-	},
-	{
-		"label": "FLAGSHIP ARMOR",
-		"name": "Flagship Armor",
-		"key": "flagship_armor",
-		"description": "Permanent upgrade: reduces flagship damage taken by 2 per level."
-	},
-	{
-		"label": "FLAGSHIP SHIELD",
-		"name": "Flagship Shield",
-		"key": "flagship_shield",
-		"description": "Permanent upgrade: reduces flagship damage taken by 5% per level."
-	},		
+	}
 ]
 const RESEARCH_ROW_DISPLAY := [
 	{
 		"title": "FLAGSHIP",
+		"ship_id": "flagship",
 		"upgrades": [
-			{"label": "Click Rate Cap", "type": "cap", "key": "click_multiplier", "description": "Raises the maximum Click Rate upgrade level by 1.", "pos": [362.0, 20.0]},
-			{"label": "Command", "type": "cap", "key": "drones", "description": "Raises the maximum Command Capacity level by 1.", "pos": [520.0, 20.0]},
-			{"label": "Shield", "type": "passive", "key": "flagship_shield", "description": "Reduces flagship damage taken by 5% per level.", "pos": [678.0, 20.0]},
-			{"label": "Click Amount Cap", "type": "cap", "key": "click_output", "description": "Raises the maximum Click Amount level by 1.", "pos": [230.0, 110.0]},
-			{"label": "Hull", "type": "passive", "key": "flagship_hull", "description": "Multiplies flagship HP by 1.5 per level.", "pos": [400.0, 110.0]},
-			{"label": "Armor", "type": "passive", "key": "flagship_armor", "description": "Reduces flagship damage taken by 2 per level.", "pos": [570.0, 110.0]},
-			{"label": "Ship Speed", "type": "cap", "key": "flagship_speed", "description": "Raises the maximum Flagship Speed level by 1.", "pos": [740.0, 110.0]}
+			{"label": "Command Cap", "type": "cap", "key": "flagship_command_capacity", "description": "Add 10 levels to the Flagship Command Capacity ore cap."},
+			{"label": "Click Rate Cap", "type": "cap", "key": "flagship_click_rate", "description": "Add 10 levels to the Flagship Click Rate ore cap."},
+			{"label": "Readiness", "type": "passive", "key": "flagship_readiness", "description": "Start every run at Command Capacity level 1."},
+			{"label": "Ion Thrusters", "type": "passive", "key": "flagship_ion_thrusters", "description": "Multiply flagship speed by 1.5."},
+			{"label": "Railgun", "type": "passive", "key": "flagship_railgun", "description": "Add 10 click damage against battle enemies only."}
 		]
 	},
 	{
 		"title": "DRONES",
+		"ship_id": "mining_drone",
 		"upgrades": [
-			{"label": "Mining Cap", "type": "cap", "key": "mining", "description": "Raises the maximum Mining Amount level by 1.", "pos": [150.0, 38.0]},
-			{"label": "Mining Speed", "type": "cap", "key": "mining_speed", "description": "Raises the maximum Mining Speed level by 1.", "pos": [285.0, 38.0]},
-			{"label": "Mining Laser", "type": "passive", "key": "drone_mining_lasers", "description": "Doubles drone mining amount.", "pos": [420.0, 38.0]},
-			{"label": "Multiplier", "type": "cap", "key": "drone_multiplier", "description": "Raises the maximum Drone Multiplier level by 1.", "pos": [555.0, 38.0]},
-			{"label": "Cargo Cap", "type": "cap", "key": "capacity", "description": "Raises the maximum Carry Capacity level by 1.", "pos": [690.0, 38.0]},
-			{"label": "Move Speed", "type": "cap", "key": "speed", "description": "Raises the maximum Drone Move Speed level by 1.", "pos": [825.0, 38.0]},
-			{"label": "Ion Thrust", "type": "passive", "key": "drone_ion_thrusts", "description": "Multiplies drone speed by 3.", "pos": [960.0, 38.0]}
+			{"label": "Mining Lasers", "type": "passive", "key": "drone_mining_lasers", "description": "Double drone mining amount."},
+			{"label": "Ion Thrusters", "type": "passive", "key": "drone_ion_thrusts", "description": "Multiply drone speed by 3."}
 		]
 	},
 	{
-		"title": "REFINERY",
+		"title": "ROMIUS",
+		"ship_id": "refinery",
 		"requires_ship": "refinery",
 		"upgrades": [
-			{"label": "Command", "type": "ship_stat", "key": "refinery_command", "stat_key": "command_capacity", "description": "Refinery command capacity.", "pos": [150.0, 19.0]},
-			{"label": "Click Mult", "type": "ship_stat", "key": "refinery_click_multiplier", "stat_key": "click_multiplier", "description": "Refinery click multiplier.", "pos": [302.0, 19.0]},
-			{"label": "Hull", "type": "ship_stat", "key": "refinery_hull", "stat_key": "hull", "description": "Refinery maximum hull points.", "pos": [454.0, 19.0]},
-			{"label": "Armor", "type": "ship_stat", "key": "refinery_armor", "stat_key": "armor", "description": "Refinery flat damage reduction.", "pos": [606.0, 19.0]},
-			{"label": "Shield", "type": "ship_stat", "key": "refinery_shield", "stat_key": "shield", "description": "Refinery percentage damage reduction.", "pos": [758.0, 19.0]},
-			{"label": "Global Bonus", "type": "ship_stat", "key": "refinery_global_income", "stat_key": "global_income_bonus", "description": "Bonus applied to all ore income.", "pos": [910.0, 19.0]}
+			{"label": "Command Cap", "type": "cap", "key": "refinery_command_capacity", "description": "Add 10 levels to Romius Command Capacity ore cap."},
+			{"label": "Click Rate Cap", "type": "cap", "key": "refinery_click_rate", "description": "Add 10 levels to Romius Click Rate ore cap."}
+		]
+	},
+	{
+		"title": "HAMMOND",
+		"ship_id": "hammond",
+		"requires_ship": "hammond",
+		"upgrades": [
+			{"label": "Command Cap", "type": "cap", "key": "hammond_command_capacity", "description": "Add 10 levels to Hammond Command Capacity ore cap."},
+			{"label": "Click Rate Cap", "type": "cap", "key": "hammond_click_rate", "description": "Add 10 levels to Hammond Click Rate ore cap."}
+		]
+	},
+	{
+		"title": "DRONE CARRIER",
+		"ship_id": "drone_carrier",
+		"requires_ship": "drone_carrier",
+		"upgrades": [
+			{"label": "Command Cap", "type": "cap", "key": "drone_carrier_command_capacity", "description": "Add 10 levels to the Carrier Command Capacity ore cap."},
+			{"label": "Click Rate Cap", "type": "cap", "key": "drone_carrier_click_rate", "description": "Add 10 levels to the Carrier Click Rate ore cap."}
 		]
 	}
 ]
-
 func _ready():
 	var cur_scene = get_tree().get_current_scene()
 	resource_manager = cur_scene.get_node("ResourceManager") if cur_scene.has_node("ResourceManager") else null
@@ -340,7 +377,7 @@ func _ready():
 
 	dev_panel = Panel.new()
 	dev_panel.name = "DevPanel"
-	dev_panel.size = Vector2(280.0, 68.0)
+	dev_panel.size = Vector2(280.0, 102.0)
 	dev_panel.add_theme_stylebox_override("panel", panel_style.duplicate())
 	add_child(dev_panel)
 
@@ -368,6 +405,15 @@ func _ready():
 	dev_add_research_button.size = Vector2(128.0, 28.0)
 	dev_panel.add_child(dev_add_research_button)
 	dev_add_research_button.pressed.connect(Callable(self, "_on_dev_add_research_pressed"))
+
+	dev_prestige_button = Button.new()
+	dev_prestige_button.name = "DevPrestigeButton"
+	dev_prestige_button.text = "Prestige +1"
+	dev_prestige_button.tooltip_text = "Perform a normal prestige without requiring a battle victory"
+	dev_prestige_button.position = Vector2(8.0, 65.0)
+	dev_prestige_button.size = Vector2(264.0, 28.0)
+	dev_panel.add_child(dev_prestige_button)
+	dev_prestige_button.pressed.connect(Callable(self, "_on_dev_prestige_pressed"))
 
 	research_button = Button.new()
 	research_button.name = "ResearchButton"
@@ -480,7 +526,7 @@ func _ready():
 		passive_button.size = Vector2(20, 28)
 		prestige_panel.add_child(passive_button)
 		technology_passive_buttons.append(passive_button)
-		passive_button.pressed.connect(Callable(self, "_on_passive_upgrade_%s" % passive_data["key"]))
+		passive_button.pressed.connect(Callable(self, "_upgrade_passive").bind(str(passive_data["key"])))
 		var passive_refund = Button.new()
 		passive_refund.name = "%sTechnologyRefundButton" % passive_data["key"]
 		passive_refund.text = "-"
@@ -488,8 +534,9 @@ func _ready():
 		passive_refund.size = Vector2(20, 28)
 		passive_refund.tooltip_text = "Remove uncommitted allocation"
 		prestige_panel.add_child(passive_refund)
+		passive_refund.visible = false
 		technology_passive_refund_buttons.append(passive_refund)
-		passive_refund.pressed.connect(Callable(self, "_on_passive_refund_%s" % passive_data["key"]))
+		passive_refund.pressed.connect(Callable(self, "_refund_passive").bind(str(passive_data["key"])))
 
 	var prestige_row_y = [98, 138, 178, 218, 258, 298, 338, 378, 418]
 	var prestige_names = ["ClickAmountCap", "ClickMultiplierCap", "FlagshipSpeedCap", "CommandCapacityCap", "DroneMiningCap", "DroneMiningSpeedCap", "DroneMultiplierCap", "CarryCapacityCap", "DroneSpeedCap"]
@@ -638,7 +685,7 @@ func _ready():
 	refinery_signal_button = Button.new()
 	refinery_signal_button.name = "RefineryUpgradeSignalButton"
 	refinery_signal_button.text = ">"
-	refinery_signal_button.tooltip_text = "Toggle refinery upgrades"
+	refinery_signal_button.tooltip_text = "Toggle Romius upgrades"
 	refinery_signal_button.position = Vector2(btn_x, refinery_y + 8.0)
 	refinery_signal_button.size = Vector2(28.0, 28.0)
 	add_child(refinery_signal_button)
@@ -646,7 +693,7 @@ func _ready():
 
 	refinery_upgrade_label = Label.new()
 	refinery_upgrade_label.name = "RefineryUpgradeLabel"
-	refinery_upgrade_label.text = "REFINERY UPGRADES"
+	refinery_upgrade_label.text = "ROMIUS UPGRADES"
 	refinery_upgrade_label.position = Vector2(btn_x + RIGHT_UPGRADE_LABEL_X, refinery_y + 8.0)
 	refinery_upgrade_label.size = Vector2(300.0, 24.0)
 	refinery_upgrade_label.add_theme_font_size_override("font_size", 14)
@@ -658,11 +705,13 @@ func _ready():
 		var row_y = refinery_y + 38.0 + RIGHT_UPGRADE_ROW_GAP * index
 		var row_label = _create_upgrade_row("Refinery%s" % str(upgrade_data["stat_key"]).to_pascal_case(), btn_x, row_y, "refinery")
 		refinery_upgrade_texts.append(row_label)
-		var upgrade_button = _create_upgrade_button("Upgrade Refinery %s" % upgrade_data["label"], btn_x, row_y, Callable(self, "_on_upgrade_refinery_stat").bind(str(upgrade_data["stat_key"])))
+		var upgrade_button = _create_upgrade_button("Upgrade Romius %s" % upgrade_data["label"], btn_x, row_y, Callable(self, "_on_upgrade_refinery_stat").bind(str(upgrade_data["stat_key"])))
 		refinery_upgrade_buttons.append(upgrade_button)
 	_set_refinery_upgrade_contents_visible(false)
 	refinery_signal_button.visible = false
 	refinery_upgrade_label.visible = false
+	for ship_key in ["hammond", "drone_carrier"]:
+		_build_ship_upgrade_hud(ship_key, panel_style)
 
 	# last action label
 	last_action_label = Label.new()
@@ -715,12 +764,21 @@ func _build_research_panel() -> void:
 	var title_label = Label.new()
 	title_label.name = "ResearchRowsTitle"
 	title_label.text = "SHIP RESEARCH"
-	title_label.position = Vector2(420.0, 20.0)
-	title_label.size = Vector2(300.0, 28.0)
+	title_label.position = Vector2(330.0, 20.0)
+	title_label.size = Vector2(220.0, 28.0)
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title_label.add_theme_font_size_override("font_size", 18)
 	title_label.add_theme_color_override("font_color", Color("72d6e8"))
 	research_panel.add_child(title_label)
+
+	hunt_research_button = Button.new()
+	hunt_research_button.name = "HuntResearchButton"
+	hunt_research_button.text = "Hunt for Research"
+	hunt_research_button.position = Vector2(570.0, 18.0)
+	hunt_research_button.size = Vector2(190.0, 28.0)
+	hunt_research_button.tooltip_text = "Launch a named fight to unlock a research card"
+	research_panel.add_child(hunt_research_button)
+	hunt_research_button.pressed.connect(Callable(self, "_on_hunt_research_pressed"))
 
 	research_tab_button = Button.new()
 	research_tab_button.name = "ResearchTabButton"
@@ -738,95 +796,134 @@ func _build_research_panel() -> void:
 	research_panel.add_child(rewards_tab_button)
 	rewards_tab_button.pressed.connect(Callable(self, "_on_rewards_tab_pressed"))
 
+	research_scroll_container = ScrollContainer.new()
+	research_scroll_container.name = "ResearchScrollContainer"
+	research_scroll_container.position = Vector2(20.0, 60.0)
+	research_scroll_container.size = Vector2(1100.0, 500.0)
+	research_scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	research_scroll_container.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	research_scroll_container.follow_focus = true
+	research_panel.add_child(research_scroll_container)
+	research_row_controls.append(research_scroll_container)
+
+	research_scroll_content = Control.new()
+	research_scroll_content.name = "ResearchScrollContent"
+	research_scroll_content.custom_minimum_size = Vector2(1080.0, 540.0)
+	research_scroll_container.add_child(research_scroll_content)
+
+	rewards_scroll_container = ScrollContainer.new()
+	rewards_scroll_container.name = "RewardsScrollContainer"
+	rewards_scroll_container.position = Vector2(20.0, 60.0)
+	rewards_scroll_container.size = Vector2(1100.0, 500.0)
+	rewards_scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	rewards_scroll_container.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	rewards_scroll_container.follow_focus = true
+	research_panel.add_child(rewards_scroll_container)
+	reward_controls.append(rewards_scroll_container)
+
+	rewards_scroll_content = Control.new()
+	rewards_scroll_content.name = "RewardsScrollContent"
+	rewards_scroll_content.custom_minimum_size = Vector2(1080.0, 540.0)
+	rewards_scroll_container.add_child(rewards_scroll_content)
+
 	for row_index in range(RESEARCH_ROW_DISPLAY.size()):
 		_build_research_row(RESEARCH_ROW_DISPLAY[row_index], row_index)
+	research_scroll_content.custom_minimum_size.y = max(540.0, 8.0 + RESEARCH_ROW_DISPLAY.size() * 138.0)
 
 	_build_rewards_tab()
 
-	research_prestige_button = Button.new()
-	research_prestige_button.name = "ResearchRowsPrestigeButton"
-	research_prestige_button.text = "Prestige"
-	research_prestige_button.position = Vector2(20.0, 570.0)
-	research_prestige_button.size = Vector2(1100.0, 34.0)
-	research_panel.add_child(research_prestige_button)
-	research_prestige_button.pressed.connect(Callable(self, "_on_prestige_pressed"))
 	_set_expedition_tab("research")
 
 func _build_rewards_tab() -> void:
-	var reward_panel = Panel.new()
-	reward_panel.name = "RefineryRewardPanel"
-	reward_panel.position = Vector2(130.0, 116.0)
-	reward_panel.size = Vector2(880.0, 190.0)
-	reward_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	reward_panel.add_theme_stylebox_override("panel", _make_flat_style(Color(0.06, 0.11, 0.14, 0.78), Color(0.4, 0.86, 0.72, 0.7), 1, 4))
-	research_panel.add_child(reward_panel)
-	reward_controls.append(reward_panel)
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state and game_state.has_method("get_prestige_boss_levels"):
+		prestige_boss_levels = game_state.get_prestige_boss_levels()
+	for index in range(prestige_boss_levels.size()):
+		var target_prestige = prestige_boss_levels[index]
+		var prestige_data: Dictionary = game_state.get_prestige_data(target_prestige)
+		var reward_panel = Panel.new()
+		reward_panel.name = "Prestige%dPanel" % target_prestige
+		reward_panel.position = Vector2(4.0, 4.0 + index * 126.0)
+		reward_panel.size = Vector2(1068.0, 116.0)
+		reward_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		reward_panel.add_theme_stylebox_override("panel", _make_flat_style(Color(0.06, 0.11, 0.14, 0.78), Color(0.4, 0.86, 0.72, 0.7), 1, 4))
+		rewards_scroll_content.add_child(reward_panel)
 
-	var reward_title = Label.new()
-	reward_title.name = "RefineryRewardTitle"
-	reward_title.text = "PRESTIGE 5 REWARD: REFINERY"
-	reward_title.position = Vector2(24.0, 20.0)
-	reward_title.size = Vector2(430.0, 28.0)
-	reward_title.add_theme_font_size_override("font_size", 16)
-	reward_title.add_theme_color_override("font_color", Color("f4d06f"))
-	reward_panel.add_child(reward_title)
+		var reward_title = Label.new()
+		reward_title.text = "PRESTIGE %d | %s ORE" % [target_prestige, _format_number(int(prestige_data["cost"]))]
+		reward_title.position = Vector2(18.0, 10.0)
+		reward_title.size = Vector2(650.0, 24.0)
+		reward_title.add_theme_font_size_override("font_size", 14)
+		reward_title.add_theme_color_override("font_color", Color("f4d06f"))
+		reward_panel.add_child(reward_title)
 
-	var reward_description = Label.new()
-	reward_description.name = "RefineryRewardDescription"
-	reward_description.text = "Global refinery ship. Adds 1.012x ore income and joins fleet battles."
-	reward_description.position = Vector2(24.0, 58.0)
-	reward_description.size = Vector2(520.0, 48.0)
-	reward_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	reward_description.add_theme_font_size_override("font_size", 13)
-	reward_description.add_theme_color_override("font_color", Color("d9f4ff"))
-	reward_panel.add_child(reward_description)
+		var reset_description = Label.new()
+		reset_description.text = "Consumes the required ore and resets field, drones, and every ore-bought level."
+		reset_description.position = Vector2(18.0, 40.0)
+		reset_description.size = Vector2(820.0, 22.0)
+		reset_description.add_theme_font_size_override("font_size", 12)
+		reset_description.add_theme_color_override("font_color", Color("ffaaa3"))
+		reward_panel.add_child(reset_description)
 
-	var ship_stats_label = Label.new()
-	ship_stats_label.name = "RefineryRewardStats"
-	ship_stats_label.text = "Command 0  |  Click Mult 1.00x  |  Hull 100  |  Armor 0  |  Shield 0%"
-	ship_stats_label.position = Vector2(24.0, 112.0)
-	ship_stats_label.size = Vector2(680.0, 28.0)
-	ship_stats_label.add_theme_font_size_override("font_size", 12)
-	ship_stats_label.add_theme_color_override("font_color", Color("8de8ff"))
-	reward_panel.add_child(ship_stats_label)
+		var reward_description = Label.new()
+		reward_description.text = "REWARD  %s" % str(prestige_data["reward"])
+		reward_description.position = Vector2(18.0, 70.0)
+		reward_description.size = Vector2(820.0, 36.0)
+		reward_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		reward_description.add_theme_font_size_override("font_size", 12)
+		reward_description.add_theme_color_override("font_color", Color("d9f4ff"))
+		reward_panel.add_child(reward_description)
 
-	reward_refinery_status_label = Label.new()
-	reward_refinery_status_label.name = "RefineryRewardStatus"
-	reward_refinery_status_label.text = "LOCKED"
-	reward_refinery_status_label.position = Vector2(610.0, 24.0)
-	reward_refinery_status_label.size = Vector2(220.0, 28.0)
-	reward_refinery_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	reward_refinery_status_label.add_theme_font_size_override("font_size", 14)
-	reward_refinery_status_label.add_theme_color_override("font_color", Color("f4d06f"))
-	reward_panel.add_child(reward_refinery_status_label)
+		var status_label = Label.new()
+		status_label.text = "LOCKED"
+		status_label.position = Vector2(820.0, 12.0)
+		status_label.size = Vector2(210.0, 24.0)
+		status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		status_label.add_theme_font_size_override("font_size", 13)
+		status_label.add_theme_color_override("font_color", Color("f4d06f"))
+		reward_panel.add_child(status_label)
 
-	reward_refinery_claim_button = Button.new()
-	reward_refinery_claim_button.name = "RefineryRewardClaimButton"
-	reward_refinery_claim_button.text = "Claim"
-	reward_refinery_claim_button.position = Vector2(690.0, 134.0)
-	reward_refinery_claim_button.size = Vector2(150.0, 34.0)
-	reward_panel.add_child(reward_refinery_claim_button)
-	reward_refinery_claim_button.pressed.connect(Callable(self, "_on_claim_refinery_reward"))
+		var attempt_button = Button.new()
+		attempt_button.text = "Prestige"
+		attempt_button.position = Vector2(870.0, 58.0)
+		attempt_button.size = Vector2(176.0, 40.0)
+		reward_panel.add_child(attempt_button)
+		attempt_button.pressed.connect(Callable(self, "_on_prestige_purchase_pressed").bind(target_prestige))
+		reward_entries[target_prestige] = {"status": status_label, "button": attempt_button}
+	rewards_scroll_content.custom_minimum_size.y = max(540.0, 8.0 + prestige_boss_levels.size() * 126.0)
+
+func _format_number(value: int) -> String:
+	var raw = str(value)
+	var formatted = ""
+	while raw.length() > 3:
+		formatted = "," + raw.right(3) + formatted
+		raw = raw.left(raw.length() - 3)
+	return raw + formatted
 
 func _build_research_row(row_data: Dictionary, row_index: int) -> void:
-	var row_positions = [72.0, 268.0, 426.0]
-	var row_heights = [184.0, 140.0, 104.0]
-	var row_y = float(row_positions[row_index])
-	var row_height = float(row_heights[row_index])
+	var row_height = 128.0
+	var row_y = 8.0 + float(row_index) * (row_height + 10.0)
 	var row_panel = Panel.new()
 	row_panel.name = "%sResearchRow" % row_data["title"]
-	row_panel.position = Vector2(24.0, row_y)
-	row_panel.size = Vector2(1092.0, row_height)
+	row_panel.position = Vector2(4.0, row_y)
+	row_panel.size = Vector2(1068.0, row_height)
 	row_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row_panel.add_theme_stylebox_override("panel", _make_flat_style(Color(0.07, 0.12, 0.16, 0.72), Color(0.25, 0.65, 0.75, 0.55), 1, 4))
-	research_panel.add_child(row_panel)
-	research_row_controls.append(row_panel)
+	research_scroll_content.add_child(row_panel)
 
 	var ship_label = Label.new()
 	ship_label.name = "%sResearchRowLabel" % row_data["title"]
 	ship_label.text = str(row_data["title"])
-	ship_label.position = Vector2(18.0, row_height * 0.5 - 15.0)
-	ship_label.size = Vector2(112.0, 30.0)
+	ship_label.position = Vector2(18.0, row_height * 0.5 - 28.0)
+	ship_label.size = Vector2(112.0, 56.0)
+	ship_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ship_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state and game_state.has_method("get_ship_profile"):
+		var profile = game_state.get_ship_profile(StringName(row_data.get("ship_id", ""))) as ShipProfile
+		if profile:
+			ship_label.text = "%s\n%s" % [str(row_data["title"]), profile.get_category_name().to_upper()]
+			ship_label.tooltip_text = "Roles: %s" % ", ".join(profile.get_role_names())
 	ship_label.add_theme_font_size_override("font_size", 14)
 	ship_label.add_theme_color_override("font_color", Color("f4d06f"))
 	row_panel.add_child(ship_label)
@@ -843,9 +940,10 @@ func _build_research_row(row_data: Dictionary, row_index: int) -> void:
 	if upgrades.is_empty():
 		var placeholder = Label.new()
 		placeholder.name = "PlaceholderResearchLabel"
-		placeholder.text = "Locked"
+		placeholder.text = str(row_data.get("placeholder", "NO UNIQUE TECHNOLOGIES YET"))
 		placeholder.position = Vector2(170.0, row_height * 0.5 - 14.0)
-		placeholder.size = Vector2(160.0, 28.0)
+		placeholder.size = Vector2(872.0, 28.0)
+		placeholder.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		placeholder.add_theme_font_size_override("font_size", 14)
 		placeholder.add_theme_color_override("font_color", Color("8da8b8"))
 		row_panel.add_child(placeholder)
@@ -859,7 +957,7 @@ func _build_research_row(row_data: Dictionary, row_index: int) -> void:
 	if row_data.has("requires_ship"):
 		var lock_label = Label.new()
 		lock_label.name = "%sResearchLockLabel" % row_data["title"]
-		lock_label.text = "Locked - claim this ship from Rewards"
+		lock_label.text = "Locked - reach its prestige reward"
 		lock_label.position = Vector2(330.0, row_height * 0.5 - 14.0)
 		lock_label.size = Vector2(560.0, 28.0)
 		lock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -908,8 +1006,10 @@ func _build_research_tile(row_panel: Panel, upgrade_data: Dictionary, tile_index
 	refund_button.size = Vector2(26.0, 22.0)
 	refund_button.tooltip_text = "Remove one uncommitted allocation"
 	tile.add_child(refund_button)
-	var action_key = str(upgrade_data.get("stat_key", upgrade_data["key"])) if str(upgrade_data["type"]) == "ship_stat" else str(upgrade_data["key"])
+	var action_key = str(upgrade_data["key"])
 	refund_button.pressed.connect(Callable(self, "_on_research_tile_pressed").bind(str(upgrade_data["type"]), action_key, -1))
+	if str(upgrade_data["type"]) == "passive":
+		refund_button.visible = false
 
 	var buy_button = Button.new()
 	buy_button.name = "BuyButton"
@@ -966,13 +1066,14 @@ func _layout_hud() -> void:
 	var drone_y = flagship_y + flagship_height + RIGHT_UPGRADE_SECTION_GAP
 	var drone_height = RIGHT_UPGRADE_DRONE_HEIGHT if drone_upgrades_visible else RIGHT_UPGRADE_HEADER_HEIGHT
 	var refinery_y = drone_y + drone_height + RIGHT_UPGRADE_SECTION_GAP
+	var refinery_height = RIGHT_UPGRADE_REFINERY_HEIGHT if refinery_upgrades_visible else RIGHT_UPGRADE_HEADER_HEIGHT
 	var control_x = 18.0
 	var control_y = max(142.0, help_y - 286.0)
 	var control_width = min(280.0, max(220.0, viewport_size.x - 36.0))
 	var control_half_width = (control_width - 8.0) * 0.5
 	if dev_panel:
-		dev_panel.position = Vector2(control_x, control_y - 78.0)
-		dev_panel.size = Vector2(control_width, 68.0)
+		dev_panel.position = Vector2(control_x, control_y - 112.0)
+		dev_panel.size = Vector2(control_width, 102.0)
 	if dev_label:
 		dev_label.size = Vector2(control_width - 20.0, 22.0)
 	if dev_add_ore_button:
@@ -981,6 +1082,9 @@ func _layout_hud() -> void:
 	if dev_add_research_button:
 		dev_add_research_button.position = Vector2(control_half_width + 16.0, 31.0)
 		dev_add_research_button.size = Vector2(control_half_width, 28.0)
+	if dev_prestige_button:
+		dev_prestige_button.position = Vector2(8.0, 65.0)
+		dev_prestige_button.size = Vector2(max(1.0, control_width - 16.0), 28.0)
 	if controls_toggle_button:
 		controls_toggle_button.position = Vector2(control_x, control_y)
 		controls_toggle_button.size = Vector2(28.0, 28.0)
@@ -1042,9 +1146,6 @@ func _layout_hud() -> void:
 	if prestige_button:
 		prestige_button.position = Vector2(20.0, 570.0)
 		prestige_button.size = Vector2(1100.0, 34.0)
-	if research_prestige_button:
-		research_prestige_button.position = Vector2(20.0, 570.0)
-		research_prestige_button.size = Vector2(1100.0, 34.0)
 	for index in range(technology_column_headers.size()):
 		technology_column_headers[index].position = Vector2(PRESTIGE_COLUMN_X[index], 62.0)
 		technology_column_headers[index].size = Vector2(240.0, 24.0)
@@ -1161,6 +1262,7 @@ func _layout_hud() -> void:
 		refinery_level_texts[index].size = Vector2(44.0, 24.0)
 		refinery_effect_texts[index].position = Vector2(panel_x + RIGHT_UPGRADE_EFFECT_X, row_positions[index])
 		refinery_effect_texts[index].size = Vector2(max(72.0, panel_width - RIGHT_UPGRADE_EFFECT_X - 8.0), 24.0)
+	_layout_ship_upgrade_huds(panel_x, refinery_y + refinery_height + RIGHT_UPGRADE_SECTION_GAP, panel_width, content_width)
 	if resource_label:
 		resource_label.position = Vector2(18.0, 16.0)
 	if fleet_label:
@@ -1174,6 +1276,51 @@ func _layout_hud() -> void:
 	if help_label:
 		help_label.position = Vector2(18.0, help_y)
 		help_label.size = Vector2(max(180.0, viewport_size.x - 36.0), 24.0)
+
+func _layout_ship_upgrade_huds(panel_x: float, start_y: float, panel_width: float, content_width: float) -> void:
+	var game_state = get_node_or_null("/root/GameState")
+	var y = start_y
+	for ship_key in ["hammond", "drone_carrier"]:
+		var hud: Dictionary = ship_upgrade_huds.get(ship_key, {})
+		if hud.is_empty():
+			continue
+		var unlocked = game_state and game_state.is_ship_unlocked(ship_key)
+		var hud_visible = unlocked and not _has_open_research_overlay()
+		var expanded = bool(ship_upgrades_visible.get(ship_key, false))
+		var rows: Array = hud["rows"]
+		var full_height = 38.0 + float(rows.size()) * RIGHT_UPGRADE_ROW_GAP
+		var height = full_height if expanded else RIGHT_UPGRADE_HEADER_HEIGHT
+		var panel = hud["panel"] as Panel
+		var toggle = hud["toggle"] as Button
+		var title = hud["title"] as Label
+		panel.visible = hud_visible
+		toggle.visible = hud_visible
+		title.visible = hud_visible
+		panel.position = Vector2(panel_x - 8.0, y)
+		panel.size = Vector2(panel_width, height)
+		toggle.position = Vector2(panel_x, y + 8.0)
+		toggle.text = ">" if expanded else "<"
+		title.position = Vector2(panel_x + RIGHT_UPGRADE_LABEL_X, y + 8.0)
+		title.size = Vector2(content_width, 24.0)
+		for index in range(rows.size()):
+			var row: Dictionary = rows[index]
+			var row_visible = hud_visible and expanded
+			var row_y = y + 38.0 + RIGHT_UPGRADE_ROW_GAP * index
+			var button = row["button"] as Button
+			var name_label = row["name"] as Label
+			var level_label = row["level"] as Label
+			var effect_label = row["effect"] as Label
+			for control in [button, name_label, level_label, effect_label]:
+				control.visible = row_visible
+			button.position = Vector2(panel_x, row_y)
+			name_label.position = Vector2(panel_x + RIGHT_UPGRADE_LABEL_X, row_y)
+			name_label.size = Vector2(RIGHT_UPGRADE_LEVEL_X - RIGHT_UPGRADE_LABEL_X - 6.0, 24.0)
+			level_label.position = Vector2(panel_x + RIGHT_UPGRADE_LEVEL_X, row_y)
+			level_label.size = Vector2(44.0, 24.0)
+			effect_label.position = Vector2(panel_x + RIGHT_UPGRADE_EFFECT_X, row_y)
+			effect_label.size = Vector2(max(72.0, panel_width - RIGHT_UPGRADE_EFFECT_X - 8.0), 24.0)
+		if hud_visible:
+			y += height + RIGHT_UPGRADE_SECTION_GAP
 
 func _get_prestige_panel_scale(viewport_size: Vector2) -> float:
 	var max_panel_size = viewport_size * PRESTIGE_PANEL_VIEWPORT_RATIO
@@ -1232,7 +1379,7 @@ func _process(_delta):
 		var drone_level = int(resource_manager.drone_level)
 		var active_drone_count = int(resource_manager.get_active_drone_count())
 		var flagship_speed_level = int(resource_manager.flagship_speed_level)
-		var click_gain = float(resource_manager.get_click_output()) * resource_manager.get_global_ore_multiplier()
+		var click_gain = float(resource_manager.get_click_output()) * resource_manager.get_refinery_click_multiplier() * resource_manager.get_global_ore_multiplier()
 		_update_ore_labels(float(resource_manager.total_resources))
 		upgrade_label.text = "FLAGSHIP UPGRADES    %.1f / PER CLICK" % click_gain
 		click_output_text.text = "CLICK OUTPUT"
@@ -1260,9 +1407,10 @@ func _process(_delta):
 			_update_upgrade_button(command_capacity_button, "Replace lost drone", active_drone_count, resource_manager.get_drone_purchase_cost(), drone_level)
 		else:
 			_update_upgrade_button(command_capacity_button, "Upgrade command capacity", drone_level, resource_manager.get_drone_purchase_cost(), resource_manager.get_ore_upgrade_cap("drones"))
-		var drone_trip_gain = float(resource_manager.get_capacity()) * resource_manager.get_drone_multiplier()
+		var drone_trip_gain = float(resource_manager.get_capacity()) * resource_manager.get_drone_multiplier() * resource_manager.get_global_ore_multiplier()
 		drone_upgrade_label.text = "DRONE UPGRADES    %.1f / PER TRIP" % drone_trip_gain
 	_update_refinery_upgrade_hud()
+	_update_ship_upgrade_huds()
 	if prestige_research_label and resource_manager:
 		var game_state = get_node_or_null("/root/GameState")
 		if game_state:
@@ -1329,6 +1477,8 @@ func _set_expedition_tab(tab_name: String) -> void:
 		research_tab_button.disabled = showing_research
 	if rewards_tab_button:
 		rewards_tab_button.disabled = not showing_research
+	if hunt_research_button:
+		hunt_research_button.visible = showing_research
 	_update_expedition_panel_values()
 
 func _on_research_tab_pressed() -> void:
@@ -1363,60 +1513,45 @@ func _update_research_panel_values() -> void:
 		if not ship_unlocked:
 			continue
 		if upgrade_type == "cap":
-			var committed_cap_level = int(game_state.cap_levels.get(upgrade_key, 0))
-			var pending_cap_level = int(game_state.pending_cap_levels.get(upgrade_key, committed_cap_level))
-			var pending_cap_value = int(game_state.get_pending_upgrade_cap(upgrade_key))
+			var cap_level = int(game_state.cap_levels.get(upgrade_key, 0))
+			var cap_value = int(game_state.get_research_cap_value(upgrade_key))
 			var cap_cost = int(game_state.get_research_cost(upgrade_key))
+			var card_unlocked = game_state.is_research_card_unlocked(upgrade_key)
 			if level_label:
-				level_label.text = "CAP %d" % pending_cap_value
+				level_label.text = "CAP %d" % cap_value if card_unlocked or cap_level > 0 else "HUNT LOCKED"
 			if buy_button:
-				buy_button.disabled = false
+				buy_button.disabled = not card_unlocked or int(game_state.research_points) < cap_cost
 				buy_button.tooltip_text = "%s\nCost: %d research" % [description, cap_cost]
 			if refund_button:
-				refund_button.disabled = pending_cap_level <= committed_cap_level
-				refund_button.tooltip_text = "Remove one uncommitted cap allocation."
+				refund_button.disabled = cap_level <= 0
+				refund_button.tooltip_text = "Refund the most recent rank at its exact purchase cost."
 			if tile:
 				tile.tooltip_text = "%s\nCost: %d research" % [description, cap_cost]
 		elif upgrade_type == "passive":
 			var committed_passive_level = int(game_state.get_passive_level(upgrade_key))
-			var pending_passive_level = int(game_state.get_pending_passive_level(upgrade_key))
 			var single_purchase = game_state.has_method("is_single_purchase_passive") and game_state.is_single_purchase_passive(upgrade_key)
-			var passive_status = "OWNED" if committed_passive_level > 0 else ("PENDING" if pending_passive_level > 0 else "OFF")
-			if not single_purchase:
-				passive_status = "L%d" % pending_passive_level
 			var passive_cost = int(game_state.get_passive_cost(upgrade_key))
+			var card_unlocked = game_state.is_research_card_unlocked(upgrade_key)
+			var passive_status = "OWNED" if committed_passive_level > 0 else ("%d RP" % passive_cost if card_unlocked else "HUNT LOCKED")
+			if not single_purchase:
+				passive_status = "L%d" % committed_passive_level
 			if level_label:
 				level_label.text = passive_status
 			if buy_button:
-				buy_button.disabled = single_purchase and pending_passive_level > 0
+				buy_button.disabled = not card_unlocked or (single_purchase and committed_passive_level > 0) or int(game_state.research_points) < passive_cost
 				buy_button.tooltip_text = "%s\nCost: %d research" % [description, passive_cost]
 			if refund_button:
-				refund_button.disabled = pending_passive_level <= committed_passive_level
-				refund_button.tooltip_text = "Remove one uncommitted passive allocation."
+				refund_button.visible = false
 			if tile:
 				tile.tooltip_text = "%s\nCost: %d research" % [description, passive_cost]
-		elif upgrade_type == "ship_stat":
-			var stat_key = str(tile_data.get("stat_key", ""))
-			var committed_level = int(game_state.get_ship_upgrade_level(required_ship, stat_key))
-			var pending_level = int(game_state.get_ship_upgrade_level(required_ship, stat_key, true))
-			var pending_value = game_state.get_ship_stat_value(required_ship, stat_key, true)
-			var upgrade_cost = int(game_state.get_ship_upgrade_cost(required_ship, stat_key))
-			if level_label:
-				level_label.text = "L%d | %s" % [pending_level, _format_ship_stat(stat_key, pending_value)]
-			if buy_button:
-				buy_button.visible = true
-				buy_button.disabled = false
-				buy_button.tooltip_text = "%s\nCost: %d research" % [description, upgrade_cost]
-			if refund_button:
-				refund_button.visible = true
-				refund_button.disabled = pending_level <= committed_level
-				refund_button.tooltip_text = "Remove one uncommitted Refinery level."
-			if tile:
-				tile.tooltip_text = "%s\nCost: %d research" % [description, upgrade_cost]
 	for ship_key in research_ship_lock_labels:
 		var lock_label = research_ship_lock_labels[ship_key] as Label
 		if lock_label:
 			lock_label.visible = not (game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked(str(ship_key)))
+	if hunt_research_button:
+		var candidates = game_state.get_research_hunt_candidates()
+		hunt_research_button.disabled = candidates.is_empty()
+		hunt_research_button.text = "All Cards Unlocked" if candidates.is_empty() else "Hunt for Research"
 
 func _format_ship_stat(stat_key: String, value) -> String:
 	if stat_key == "click_multiplier":
@@ -1440,97 +1575,115 @@ func _update_refinery_upgrade_hud() -> void:
 		_set_refinery_upgrade_contents_visible(false)
 		return
 	_set_refinery_upgrade_contents_visible(refinery_upgrades_visible)
-	refinery_upgrade_label.text = "REFINERY UPGRADES    RESEARCH %d" % int(game_state.research_points)
+	refinery_upgrade_label.text = "ROMIUS UPGRADES"
 	var levels: Array = []
 	var effects: Array = []
 	for index in range(REFINERY_HUD_UPGRADES.size()):
 		var upgrade_data = REFINERY_HUD_UPGRADES[index]
 		var stat_key = str(upgrade_data["stat_key"])
-		var level = int(game_state.get_ship_upgrade_level("refinery", stat_key, true))
-		var effect = game_state.get_ship_stat_value("refinery", stat_key, true)
-		var cost = int(game_state.get_ship_upgrade_cost("refinery", stat_key))
+		var level = int(resource_manager.get_refinery_upgrade_level(stat_key))
+		var cap = int(resource_manager.get_refinery_upgrade_cap(stat_key))
+		var effect = resource_manager.get_refinery_stat_value(stat_key)
+		var cost = int(resource_manager.get_refinery_upgrade_cost(stat_key))
 		levels.append(level)
 		effects.append(_format_ship_stat(stat_key, effect))
 		var button = refinery_upgrade_buttons[index]
 		button.text = "+"
-		button.disabled = false
-		button.tooltip_text = "Upgrade Refinery %s\nLevel: %d -> %d\nCost: %d research" % [upgrade_data["label"], level, level + 1, cost]
+		button.disabled = level >= cap
+		button.tooltip_text = "Upgrade Romius %s\nLevel: %d / %d\n%s" % [upgrade_data["label"], level, cap, "MAX" if level >= cap else "Cost: %d ore" % cost]
 		refinery_upgrade_texts[index].text = str(upgrade_data["label"])
 	_update_table_values(refinery_level_texts, refinery_effect_texts, levels, effects)
+
+func _update_ship_upgrade_huds() -> void:
+	if resource_manager == null:
+		return
+	for ship_key in ship_upgrade_huds:
+		var hud: Dictionary = ship_upgrade_huds[ship_key]
+		for row in hud["rows"]:
+			var stat_key = str(row["config"]["stat_key"])
+			var level = int(resource_manager.get_ship_upgrade_level(ship_key, stat_key))
+			var cap = int(resource_manager.get_ship_upgrade_cap(ship_key, stat_key))
+			var cost = int(resource_manager.get_ship_upgrade_cost(ship_key, stat_key))
+			var effect = ""
+			match stat_key:
+				"command_capacity": effect = "+%d drones" % level
+				"click_rate": effect = "+%d/sec" % level
+				"autocannon": effect = "%.2f DPS" % resource_manager.get_hammond_damage()
+				"ammo_conveyor": effect = "%.3fs" % resource_manager.get_hammond_interval()
+				"torpedo": effect = "+%d click" % level
+				"drone_coordination": effect = "+%d speed" % (level * 5)
+				"fighter_drones": effect = "%d x 2 DPS" % level
+			row["level"].text = "L%d" % level
+			row["effect"].text = effect
+			row["button"].disabled = level >= cap
+			row["button"].tooltip_text = "%s\nLevel: %d / %d\n%s" % [str(row["config"]["label"]), level, cap, "MAX" if level >= cap else "Cost: %d ore" % cost]
 
 func _update_rewards_panel_values() -> void:
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state == null:
 		return
-	var refinery_unlocked = game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery")
-	var can_claim_refinery = game_state.has_method("can_claim_prestige_reward") and game_state.can_claim_prestige_reward("refinery")
-	if reward_refinery_status_label:
-		if refinery_unlocked:
-			reward_refinery_status_label.text = "CLAIMED"
-		elif can_claim_refinery:
-			reward_refinery_status_label.text = "READY"
-		else:
-			reward_refinery_status_label.text = "LOCKED: PRESTIGE %d/5" % int(game_state.prestige_level)
-	if reward_refinery_claim_button:
-		reward_refinery_claim_button.disabled = not can_claim_refinery
-		reward_refinery_claim_button.text = "Claim" if not refinery_unlocked else "Claimed"
-		if refinery_unlocked:
-			reward_refinery_claim_button.tooltip_text = "Refinery unlocked and active."
-		elif can_claim_refinery:
-			reward_refinery_claim_button.tooltip_text = "Unlock the Refinery ship."
-		else:
-			reward_refinery_claim_button.tooltip_text = "Reach Prestige 5 to claim the Refinery."
+	for target_prestige in prestige_boss_levels:
+		if not reward_entries.has(target_prestige):
+			continue
+		var completed = int(game_state.prestige_level) >= target_prestige
+		var is_next = target_prestige == int(game_state.prestige_level) + 1
+		var cost = int(game_state.get_prestige_data(target_prestige).get("cost", 0))
+		var can_purchase = is_next and resource_manager and float(resource_manager.total_resources) >= float(cost)
+		var status_label = reward_entries[target_prestige]["status"] as Label
+		var attempt_button = reward_entries[target_prestige]["button"] as Button
+		if status_label:
+			if completed:
+				status_label.text = "COMPLETED"
+			elif is_next:
+				status_label.text = "READY" if can_purchase else "NEED %s ORE" % _format_number(cost)
+			else:
+				status_label.text = "LOCKED"
+		if attempt_button:
+			attempt_button.disabled = not can_purchase
+			attempt_button.text = "Completed" if completed else "Prestige"
+			attempt_button.tooltip_text = "Reward permanently active." if completed else ("Consume %s ore and reset this run." % _format_number(cost) if is_next else "Complete the previous prestige first.")
 
 func _update_prestige_button_state() -> void:
 	var game_state = get_node_or_null("/root/GameState")
-	var can_prestige = game_state and game_state.has_method("can_prestige") and game_state.can_prestige()
-	var tooltip = "Win a battle to unlock your next prestige." if not can_prestige else "Reset ore progress and increase prestige."
-	for button in [prestige_button, research_prestige_button]:
+	var can_prestige = game_state and resource_manager and game_state.has_method("can_prestige") and game_state.can_prestige(resource_manager.total_resources)
+	var tooltip = "Accumulate the ore required by the next reward." if not can_prestige else "Consume ore, reset the run, and increase prestige."
+	for button in [prestige_button]:
 		if button:
 			button.disabled = not can_prestige
 			button.tooltip_text = tooltip
 
-func _on_claim_refinery_reward() -> void:
+func _on_prestige_purchase_pressed(target_prestige: int) -> void:
 	var game_state = get_node_or_null("/root/GameState")
-	if game_state and game_state.has_method("claim_prestige_reward") and game_state.claim_prestige_reward("refinery"):
-		_show_action("Refinery unlocked")
-		if resource_manager and resource_manager.has_method("configure_drone"):
-			var parent = resource_manager.get_parent()
-			if parent and parent.has_node("Drones"):
-				for drone in parent.get_node("Drones").get_children():
-					resource_manager.configure_drone(drone)
-	else:
-		_show_action("Reward not available")
-	_update_expedition_panel_values()
+	if game_state == null or target_prestige != int(game_state.prestige_level) + 1:
+		_show_action("Complete the previous prestige first")
+		return
+	_perform_prestige(false)
+
+func _on_hunt_research_pressed() -> void:
+	if resource_manager and resource_manager.has_method("start_research_hunt") and resource_manager.start_research_hunt():
+		return
+	_show_action("No research card is currently available to hunt")
+
+func _refresh_drones_after_reward() -> void:
+	if resource_manager == null or not resource_manager.has_method("configure_drone"):
+		return
+	var parent = resource_manager.get_parent()
+	if parent and parent.has_node("Drones"):
+		for drone in parent.get_node("Drones").get_children():
+			resource_manager.configure_drone(drone)
 
 func _on_research_tile_pressed(upgrade_type: String, key: String, direction: int) -> void:
 	if direction > 0:
 		if upgrade_type == "cap":
 			_upgrade_research(key)
-		elif upgrade_type == "ship_stat":
-			_upgrade_ship_research("refinery", key)
 		else:
 			_upgrade_passive(key)
 	else:
 		if upgrade_type == "cap":
 			_refund_research(key)
-		elif upgrade_type == "ship_stat":
-			_refund_ship_research("refinery", key)
 		else:
 			_refund_passive(key)
 	_update_expedition_panel_values()
-
-func _upgrade_ship_research(ship_key: String, stat_key: String) -> void:
-	var game_state = get_node_or_null("/root/GameState")
-	if game_state and game_state.has_method("buy_ship_upgrade") and game_state.buy_ship_upgrade(ship_key, stat_key):
-		_show_action("%s %s level increased" % [ship_key.capitalize(), stat_key.replace("_", " ")])
-	else:
-		_show_action("Not enough research")
-
-func _refund_ship_research(ship_key: String, stat_key: String) -> void:
-	var game_state = get_node_or_null("/root/GameState")
-	if game_state and game_state.has_method("refund_ship_upgrade") and game_state.refund_ship_upgrade(ship_key, stat_key):
-		_show_action("Uncommitted Refinery level refunded")
 
 func _set_prestige_visibility(visible: bool) -> void:
 	prestige_visible = visible
@@ -1562,8 +1715,6 @@ func _set_research_visibility(visible: bool) -> void:
 		research_toggle_button.visible = visible
 	if research_points_label:
 		research_points_label.visible = visible
-	if research_prestige_button:
-		research_prestige_button.visible = visible
 	_set_mining_hud_visibility(not _has_open_research_overlay())
 	if visible:
 		_update_expedition_panel_values()
@@ -1598,6 +1749,16 @@ func _set_mining_hud_visibility(visible: bool) -> void:
 		drone_upgrade_label.visible = visible
 	_set_drone_upgrade_contents_visible(visible and drone_upgrades_visible)
 	_update_refinery_upgrade_hud()
+	if not visible:
+		for hud in ship_upgrade_huds.values():
+			hud["panel"].visible = false
+			hud["toggle"].visible = false
+			hud["title"].visible = false
+			for row in hud["rows"]:
+				for control_key in ["button", "name", "level", "effect"]:
+					row[control_key].visible = false
+	else:
+		_layout_hud()
 
 func _set_control_buttons_visibility(visible: bool) -> void:
 	for node_name in ["CenterButton", "SendButton", "Send1Button", "Send3Button", "Send5Button", "Send10Button", "SplitButton", "BattleButton", "NewFieldButton"]:
@@ -1625,14 +1786,23 @@ func _on_dev_add_research_pressed() -> void:
 		_update_expedition_panel_values()
 		_show_action("Dev: +10 research")
 
+func _on_dev_prestige_pressed() -> void:
+	_perform_prestige(true)
+
 func _on_prestige_pressed() -> void:
-	if resource_manager and resource_manager.has_method("reset_run_for_prestige"):
-		if resource_manager.reset_run_for_prestige():
-			_show_action("Run reset: ore upgrades cleared")
+	_perform_prestige(false)
+
+func _perform_prestige(force_prestige: bool) -> void:
+	if resource_manager and resource_manager.has_method("purchase_prestige"):
+		if resource_manager.purchase_prestige(force_prestige):
+			var game_state = get_node_or_null("/root/GameState")
+			var prestige = int(game_state.prestige_level) if game_state else 0
+			_show_action("Prestige %d: ore upgrades cleared" % prestige)
 			_set_prestige_visibility(false)
 			_set_research_visibility(false)
+			_layout_hud()
 		else:
-			_show_action("Win a battle before prestiging")
+			_show_action("Not enough ore for the next prestige")
 	_update_expedition_panel_values()
 
 func _upgrade_research(key: String) -> void:
@@ -1698,49 +1868,15 @@ func _on_research_refund_drone_multiplier() -> void:
 func _on_research_refund_capacity() -> void:
 	_refund_research("capacity")
 
-func _on_passive_upgrade_drone_mining_lasers() -> void:
-	_upgrade_passive("drone_mining_lasers")
-
-func _on_passive_upgrade_drone_ion_thrusts() -> void:
-	_upgrade_passive("drone_ion_thrusts")
-
-func _on_passive_upgrade_flagship_hull() -> void:
-	_upgrade_passive("flagship_hull")
-	
-func _on_passive_upgrade_flagship_armor() -> void:
-	_upgrade_passive("flagship_armor")	
-	
-func _on_passive_upgrade_flagship_shield() -> void:
-	_upgrade_passive("flagship_shield")
-
-func _on_passive_refund_drone_mining_lasers() -> void:
-	_refund_passive("drone_mining_lasers")
-
-func _on_passive_refund_drone_ion_thrusts() -> void:
-	_refund_passive("drone_ion_thrusts")
-	
-func _on_passive_refund_flagship_hull() -> void:
-	_refund_passive("flagship_hull")
-
-func _on_passive_refund_flagship_armor() -> void:
-	_refund_passive("flagship_armor")
-	
-func _on_passive_refund_flagship_shield() -> void:
-	_refund_passive("flagship_shield")
-
 func _upgrade_passive(key: String) -> void:
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and game_state.buy_passive_upgrade(key):
-		_show_action("Passive allocation added")
+		_show_action("Permanent research purchased and active")
 	else:
 		_show_action("Not enough research or already owned")
 
 func _refund_passive(key: String) -> void:
-	var game_state = get_node_or_null("/root/GameState")
-	if game_state and game_state.refund_passive_upgrade(key):
-		_show_action("Passive allocation removed")
-	else:
-		_show_action("No pending allocation")
+	_show_action("Permanent research cannot be refunded")
 
 func _refund_research(key: String) -> void:
 	var game_state = get_node_or_null("/root/GameState")
@@ -1758,6 +1894,58 @@ func _create_upgrade_button(description: String, x: float, y: float, callback: C
 	add_child(button)
 	button.pressed.connect(callback)
 	return button
+
+func _build_ship_upgrade_hud(ship_key: String, panel_style: StyleBoxFlat) -> void:
+	var config: Dictionary = SHIP_HUD_UPGRADES[ship_key]
+	var panel = Panel.new()
+	panel.name = "%sUpgradePanel" % ship_key.to_pascal_case()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", panel_style.duplicate())
+	add_child(panel)
+	var toggle = Button.new()
+	toggle.text = "<"
+	toggle.tooltip_text = "Toggle %s" % str(config["title"]).to_lower()
+	toggle.size = Vector2(28.0, 28.0)
+	add_child(toggle)
+	toggle.pressed.connect(Callable(self, "_on_ship_upgrade_toggle").bind(ship_key))
+	var title = Label.new()
+	title.text = str(config["title"])
+	title.size = Vector2(300.0, 24.0)
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", config["color"])
+	add_child(title)
+	var rows: Array = []
+	for row_data in config["rows"]:
+		var button = Button.new()
+		button.text = "+"
+		button.size = Vector2(30.0, 26.0)
+		add_child(button)
+		button.pressed.connect(Callable(self, "_on_upgrade_ship_stat").bind(ship_key, str(row_data["stat_key"])))
+		var name_label = Label.new()
+		name_label.text = str(row_data["label"])
+		name_label.add_theme_font_size_override("font_size", 12)
+		name_label.add_theme_color_override("font_color", config["color"])
+		add_child(name_label)
+		var level_label = Label.new()
+		level_label.add_theme_font_size_override("font_size", 12)
+		level_label.add_theme_color_override("font_color", config["color"])
+		add_child(level_label)
+		var effect_label = Label.new()
+		effect_label.add_theme_font_size_override("font_size", 12)
+		effect_label.add_theme_color_override("font_color", Color("d9f4ff"))
+		add_child(effect_label)
+		rows.append({"config": row_data, "button": button, "name": name_label, "level": level_label, "effect": effect_label})
+	ship_upgrade_huds[ship_key] = {"panel": panel, "toggle": toggle, "title": title, "rows": rows}
+
+func _on_ship_upgrade_toggle(ship_key: String) -> void:
+	ship_upgrades_visible[ship_key] = not bool(ship_upgrades_visible.get(ship_key, false))
+	_layout_hud()
+
+func _on_upgrade_ship_stat(ship_key: String, stat_key: String) -> void:
+	if resource_manager and resource_manager.upgrade_ship_stat(ship_key, stat_key):
+		_show_action("%s %s upgraded" % [ship_key.capitalize(), stat_key.capitalize()])
+	else:
+		_show_action("Upgrade unavailable")
 
 func _create_upgrade_row(row_name: String, x: float, y: float, section: String) -> Label:
 	var row_label = Label.new()
@@ -1883,7 +2071,10 @@ func _set_refinery_upgrade_contents_visible(visible: bool) -> void:
 		refinery_panel.visible = visible
 
 func _on_upgrade_refinery_stat(stat_key: String) -> void:
-	_upgrade_ship_research("refinery", stat_key)
+	if resource_manager and resource_manager.has_method("upgrade_refinery_stat") and resource_manager.upgrade_refinery_stat(stat_key):
+		_show_action("Romius %s upgraded" % stat_key.replace("_", " "))
+	else:
+		_show_action("Not enough ore or upgrade at cap")
 	_update_refinery_upgrade_hud()
 
 func _on_center_pressed():

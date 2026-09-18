@@ -14,6 +14,27 @@ What is included
 Notes
 - Visuals are placeholder shapes and Labels for prototyping. Tweak values in scripts for balance.
 
+Ship classification and modifiers
+- Ship identity is stored in `ShipProfile` resources. A ship has one Civilian/Military category and any number of role flags.
+- Current roles are Mining, Combat, Command, Support, Utility, Refining, and Drone.
+- Runtime effects use `ShipStatModifier` resources registered through `GameState.add_ship_stat_modifier()`.
+- A modifier can target one ship ID, one category, role flags, or a combination of those filters.
+- Stats resolve in this order: base plus flat bonuses, then additive percentages, then multipliers.
+
+Example: add 20% ore multiplier to every Civilian mining ship.
+```gdscript
+var modifier = ShipStatModifier.new()
+modifier.source_id = &"civilian_mining_reward"
+modifier.stat = ShipProfile.STAT_ORE_MULTIPLIER
+modifier.operation = ShipStatModifier.Operation.ADDITIVE_PERCENT
+modifier.value = 0.20
+modifier.target_category = ShipProfile.Category.CIVILIAN
+modifier.required_roles = ShipProfile.Role.MINING
+GameState.add_ship_stat_modifier(modifier)
+```
+
+Remove all effects from that source with `GameState.remove_ship_stat_modifiers(&"civilian_mining_reward")`.
+
 
 plans:
 

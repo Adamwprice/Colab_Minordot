@@ -10,14 +10,22 @@ const DRONE_ORBIT_RADIUS := 115.0
 const ENEMY_HP_PER_TIER := 0.75
 const ENEMY_DAMAGE_PER_TIER := 0.25
 const REFINERY_MAX_HP := 100
+const PRESTIGE_ATTACK_INTERVAL := 1.0
+const ENEMY_DRONE_ORBIT_RADIUS := 82.0
+const ENEMY_DRONE_HIT_RADIUS := 16.0
 
+var battle_type: String = "standard"
+var prestige_target: int = 0
 var click_damage: int = 1
 var click_rate_cap: float = 10.0
 var last_click_time: float = -1.0
 var mining_amount: int = 1
+var drone_max_hp: int = DRONE_MAX_HP
 var boss_tier: int = 0
 var enemy_max_hp: int = ENEMY_MAX_HP
 var enemy_attack_damage: int = ENEMY_ATTACK_DAMAGE
+var enemy_attack_interval: float = ENEMY_ATTACK_INTERVAL
+var enemy_name: String = "Enemy Fleet"
 var enemy_hp: int = ENEMY_MAX_HP
 var flagship_max_hp: int = FLAGSHIP_MAX_HP
 var flagship_hp: int = FLAGSHIP_MAX_HP
@@ -28,10 +36,29 @@ var refinery_max_hp: int = REFINERY_MAX_HP
 var refinery_hp: int = 0
 var refinery_armor: int = 0
 var refinery_shield: float = 0.0
+var hammond_unlocked: bool = false
+var hammond_max_hp: int = 100
+var hammond_hp: int = 0
+var hammond_damage: float = 5.0
+var hammond_interval: float = 1.0
+var hammond_attack_timer: float = 0.0
+var hammond_damage_bank: float = 0.0
+var carrier_unlocked: bool = false
+var carrier_max_hp: int = 100
+var carrier_hp: int = 0
+var fighter_drone_damage: int = 2
+var fighter_drone_speed: float = 1.4
+var fighter_drones: Array = []
+var research_card_name: String = ""
 var elapsed_time: float = 0.0
 var enemy_attack_timer: float = 0.0
 var battle_finished: bool = false
 var drones: Array = []
+var enemy_drones: Array = []
+var enemy_drone_max_hp: int = 0
+var enemy_drone_damage: int = 0
+var held_attack_target: String = ""
+var held_enemy_drone_index: int = -1
 
 var status_label: Label = null
 var enemy_label: Label = null
@@ -44,6 +71,8 @@ var retreat_button: Button = null
 var enemy_position := Vector2.ZERO
 var flagship_position := Vector2.ZERO
 var refinery_position := Vector2.ZERO
+var hammond_position := Vector2.ZERO
+var carrier_position := Vector2.ZERO
 
 func _ready() -> void:
 	_update_arena_positions()
@@ -51,14 +80,32 @@ func _ready() -> void:
 	var data = {}
 	if game_state:
 		data = game_state.pending_battle
+	battle_type = str(data.get("battle_type", "standard"))
+	prestige_target = max(0, int(data.get("prestige_target", 0)))
 	click_damage = int(data.get("click_damage", 1))
 	click_rate_cap = max(1.0, float(data.get("click_rate_cap", 10.0)))
 	mining_amount = int(data.get("mining_amount", 1))
+	drone_max_hp = max(1, int(data.get("drone_max_hp", DRONE_MAX_HP)))
 	boss_tier = max(0, int(data.get("boss_tier", 0)))
-	var hp_scale = 1.0 + float(boss_tier) * ENEMY_HP_PER_TIER
-	var damage_scale = 1.0 + float(boss_tier) * ENEMY_DAMAGE_PER_TIER
-	enemy_max_hp = int(round(float(ENEMY_MAX_HP) * hp_scale))
-	enemy_attack_damage = max(1, int(round(float(ENEMY_ATTACK_DAMAGE) * damage_scale)))
+	if battle_type != "standard":
+		enemy_name = str(data.get("enemy_name", "Research Target"))
+		enemy_max_hp = max(1, int(data.get("enemy_max_hp", ENEMY_MAX_HP)))
+		enemy_attack_damage = max(0, int(data.get("enemy_dps", 0)))
+		enemy_attack_interval = PRESTIGE_ATTACK_INTERVAL
+		enemy_drone_max_hp = max(0, int(data.get("enemy_drone_hp", 0)))
+		enemy_drone_damage = max(0, int(data.get("enemy_drone_dps", 0)))
+		var enemy_drone_count = max(0, int(data.get("enemy_drone_count", 0)))
+		for index in range(enemy_drone_count):
+			enemy_drones.append({
+				"hp": enemy_drone_max_hp,
+				"angle": TAU * float(index) / max(float(enemy_drone_count), 1.0),
+				"attack_timer": randf_range(0.0, PRESTIGE_ATTACK_INTERVAL)
+			})
+	else:
+		var hp_scale = 1.0 + float(boss_tier) * ENEMY_HP_PER_TIER
+		var damage_scale = 1.0 + float(boss_tier) * ENEMY_DAMAGE_PER_TIER
+		enemy_max_hp = int(round(float(ENEMY_MAX_HP) * hp_scale))
+		enemy_attack_damage = max(1, int(round(float(ENEMY_ATTACK_DAMAGE) * damage_scale)))
 	enemy_hp = enemy_max_hp
 	flagship_max_hp = max(1, int(data.get("flagship_max_hp", FLAGSHIP_MAX_HP)))
 	flagship_hp = flagship_max_hp
@@ -69,10 +116,25 @@ func _ready() -> void:
 	refinery_armor = max(0, int(data.get("refinery_armor", 0)))
 	refinery_shield = clamp(float(data.get("refinery_shield", 0.0)), 0.0, 0.95)
 	refinery_hp = refinery_max_hp if refinery_unlocked else 0
+	hammond_unlocked = bool(data.get("hammond_unlocked", false))
+	hammond_damage = max(0.0, float(data.get("hammond_damage", 5.0)))
+	hammond_interval = max(0.1, float(data.get("hammond_interval", 1.0)))
+	hammond_hp = hammond_max_hp if hammond_unlocked else 0
+	carrier_unlocked = bool(data.get("carrier_unlocked", false))
+	carrier_hp = carrier_max_hp if carrier_unlocked else 0
+	fighter_drone_damage = max(0, int(data.get("fighter_drone_damage", 2)))
+	fighter_drone_speed = max(0.1, float(data.get("fighter_drone_speed", 1.4)))
+	research_card_name = str(data.get("research_card_name", ""))
+	var fighter_count = max(0, int(data.get("fighter_drone_count", 0)))
+	for index in range(fighter_count):
+		fighter_drones.append({
+			"angle": TAU * float(index) / max(float(fighter_count), 1.0),
+			"attack_timer": randf_range(0.0, DRONE_ATTACK_INTERVAL)
+		})
 	var drone_count = int(data.get("drone_count", 0))
 	for index in range(drone_count):
 		drones.append({
-			"hp": DRONE_MAX_HP,
+			"hp": drone_max_hp,
 			"angle": TAU * float(index) / max(float(drone_count), 1.0),
 			"attack_timer": randf_range(0.0, DRONE_ATTACK_INTERVAL)
 		})
@@ -86,14 +148,16 @@ func _update_arena_positions() -> void:
 	var viewport_size = get_viewport_rect().size
 	var arena_y = viewport_size.y * 0.58
 	flagship_position = Vector2(viewport_size.x * 0.25, arena_y)
-	refinery_position = flagship_position + Vector2(44.0, -34.0)
+	refinery_position = flagship_position + Vector2(-42.0, 28.0)
+	hammond_position = flagship_position + Vector2(-54.0, -25.0)
+	carrier_position = flagship_position + Vector2(-90.0, 4.0)
 	enemy_position = Vector2(viewport_size.x * 0.75, arena_y)
 
 func _build_ui() -> void:
 	var layer = CanvasLayer.new()
 	add_child(layer)
 	var viewport_width = get_viewport_rect().size.x
-	status_label = _make_label(layer, Vector2(0, 18), "CURRENT BATTLE PRESTIGE")
+	status_label = _make_label(layer, Vector2(0, 18), "")
 	flagship_label = _make_label(layer, Vector2(0, 48), "")
 	enemy_label = _make_label(layer, Vector2(0, 76), "")
 	drone_label = _make_label(layer, Vector2(0, 104), "")
@@ -143,6 +207,9 @@ func _process(delta: float) -> void:
 	if elapsed_time >= GameState.BATTLE_TIME_LIMIT:
 		_finish_battle(false)
 		return
+	_update_held_attack()
+	if battle_finished:
+		return
 	for drone in drones:
 		if int(drone["hp"]) <= 0:
 			continue
@@ -150,27 +217,105 @@ func _process(delta: float) -> void:
 		drone["attack_timer"] = float(drone["attack_timer"]) + delta
 		if float(drone["attack_timer"]) >= DRONE_ATTACK_INTERVAL:
 			drone["attack_timer"] = 0.0
-			_damage_enemy(mining_amount)
+			_damage_active_enemy(mining_amount)
+	for fighter in fighter_drones:
+		fighter["angle"] = fmod(float(fighter["angle"]) + delta * fighter_drone_speed, TAU)
+		fighter["attack_timer"] = float(fighter["attack_timer"]) + delta
+		if float(fighter["attack_timer"]) >= DRONE_ATTACK_INTERVAL:
+			fighter["attack_timer"] = 0.0
+			_damage_active_enemy(fighter_drone_damage)
+	if hammond_unlocked and hammond_hp > 0:
+		hammond_attack_timer += delta
+		if hammond_attack_timer >= hammond_interval:
+			hammond_attack_timer = fmod(hammond_attack_timer, hammond_interval)
+			hammond_damage_bank += hammond_damage
+			var dealt_damage = int(floor(hammond_damage_bank))
+			hammond_damage_bank -= float(dealt_damage)
+			_damage_active_enemy(max(1, dealt_damage))
+	for enemy_drone in enemy_drones:
+		if int(enemy_drone["hp"]) <= 0:
+			continue
+		enemy_drone["angle"] = fmod(float(enemy_drone["angle"]) - delta * 1.0, TAU)
+		enemy_drone["attack_timer"] = float(enemy_drone["attack_timer"]) + delta
+		if float(enemy_drone["attack_timer"]) >= PRESTIGE_ATTACK_INTERVAL:
+			enemy_drone["attack_timer"] = 0.0
+			_attack_player(enemy_drone_damage)
+			if _get_fleet_hp() <= 0:
+				_finish_battle(false)
+				return
 	enemy_attack_timer += delta
-	if enemy_attack_timer >= ENEMY_ATTACK_INTERVAL:
+	if enemy_attack_damage > 0 and enemy_attack_timer >= enemy_attack_interval:
 		enemy_attack_timer = 0.0
-		_enemy_attack()
+		_attack_player(enemy_attack_damage)
+		if _get_fleet_hp() <= 0:
+			_finish_battle(false)
+			return
 	_update_labels()
 	queue_redraw()
 
 func _unhandled_input(event) -> void:
 	if battle_finished:
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		if event.position.distance_to(enemy_position) <= 55.0:
-			if not _try_consume_click():
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if not event.pressed:
+			_clear_held_attack()
+			return
+		_clear_held_attack()
+		for index in range(enemy_drones.size()):
+			if int(enemy_drones[index]["hp"]) <= 0:
+				continue
+			if event.position.distance_to(_get_enemy_drone_position(index)) <= ENEMY_DRONE_HIT_RADIUS:
+				held_attack_target = "drone"
+				held_enemy_drone_index = index
+				_attack_held_target()
 				return
-			_damage_enemy(click_damage)
+		if event.position.distance_to(enemy_position) <= 55.0:
+			held_attack_target = "boss"
+			_attack_held_target()
+
+func _update_held_attack() -> void:
+	if held_attack_target.is_empty():
+		return
+	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_clear_held_attack()
+		return
+	_attack_held_target()
+
+func _attack_held_target() -> void:
+	if held_attack_target == "drone":
+		if held_enemy_drone_index < 0 or held_enemy_drone_index >= enemy_drones.size() or int(enemy_drones[held_enemy_drone_index]["hp"]) <= 0:
+			held_enemy_drone_index = _get_first_living_enemy_drone_index()
+			if held_enemy_drone_index < 0:
+				held_attack_target = "boss"
+	if not _try_consume_click():
+		return
+	if held_attack_target == "drone":
+		_damage_enemy_drone(held_enemy_drone_index, click_damage)
+	elif held_attack_target == "boss":
+		_damage_enemy(click_damage)
+
+func _clear_held_attack() -> void:
+	held_attack_target = ""
+	held_enemy_drone_index = -1
 
 func _damage_enemy(amount: int) -> void:
+	if _get_living_enemy_drone_count() > 0:
+		return
 	enemy_hp = max(0, enemy_hp - amount)
 	if enemy_hp <= 0:
 		_finish_battle(true)
+
+func _damage_active_enemy(amount: int) -> void:
+	for index in range(enemy_drones.size()):
+		if int(enemy_drones[index]["hp"]) > 0:
+			_damage_enemy_drone(index, amount)
+			return
+	_damage_enemy(amount)
+
+func _damage_enemy_drone(index: int, amount: int) -> void:
+	if index < 0 or index >= enemy_drones.size():
+		return
+	enemy_drones[index]["hp"] = max(0, int(enemy_drones[index]["hp"]) - amount)
 
 func _try_consume_click() -> bool:
 	var now = float(Time.get_ticks_usec()) / 1000000.0
@@ -180,18 +325,18 @@ func _try_consume_click() -> bool:
 	last_click_time = now
 	return true
 
-func _enemy_attack() -> void:
+func _attack_player(amount: int) -> void:
+	if amount <= 0:
+		return
 	var living_drones = []
 	for index in range(drones.size()):
 		if int(drones[index]["hp"]) > 0:
 			living_drones.append(index)
 	if living_drones.size() > 0 and randf() < 0.85:
 		var target_index = living_drones[randi() % living_drones.size()]
-		drones[target_index]["hp"] = max(0, int(drones[target_index]["hp"]) - enemy_attack_damage)
+		drones[target_index]["hp"] = max(0, int(drones[target_index]["hp"]) - amount)
 	else:
-		_damage_fleet_ship(enemy_attack_damage)
-		if _get_fleet_hp() <= 0:
-			_finish_battle(false)
+		_damage_fleet_ship(amount)
 
 func _calculate_flagship_damage(amount: int) -> int:
 	if amount <= 0:
@@ -208,20 +353,28 @@ func _calculate_refinery_damage(amount: int) -> int:
 	return max(1, reduced_damage)
 
 func _damage_fleet_ship(amount: int) -> void:
-	if refinery_unlocked and refinery_hp > 0 and flagship_hp > 0:
-		if randf() < 0.35:
-			refinery_hp = max(0, refinery_hp - _calculate_refinery_damage(amount))
-		else:
-			flagship_hp = max(0, flagship_hp - _calculate_flagship_damage(amount))
-	elif refinery_unlocked and refinery_hp > 0:
-		refinery_hp = max(0, refinery_hp - _calculate_refinery_damage(amount))
-	else:
-		flagship_hp = max(0, flagship_hp - _calculate_flagship_damage(amount))
+	var living_ships: Array[String] = []
+	if flagship_hp > 0:
+		living_ships.append("flagship")
+	if refinery_unlocked and refinery_hp > 0:
+		living_ships.append("refinery")
+	if hammond_unlocked and hammond_hp > 0:
+		living_ships.append("hammond")
+	if carrier_unlocked and carrier_hp > 0:
+		living_ships.append("carrier")
+	if living_ships.is_empty():
+		return
+	match living_ships[randi() % living_ships.size()]:
+		"refinery": refinery_hp = max(0, refinery_hp - _calculate_refinery_damage(amount))
+		"hammond": hammond_hp = max(0, hammond_hp - amount)
+		"carrier": carrier_hp = max(0, carrier_hp - amount)
+		_: flagship_hp = max(0, flagship_hp - _calculate_flagship_damage(amount))
 
 func _finish_battle(victory: bool) -> void:
 	if battle_finished:
 		return
 	battle_finished = true
+	_clear_held_attack()
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state:
 		game_state.complete_battle(victory, elapsed_time, _get_living_drone_count())
@@ -233,12 +386,16 @@ func _on_retreat_pressed() -> void:
 func _update_labels() -> void:
 	var remaining = max(0, int(ceil(GameState.BATTLE_TIME_LIMIT - elapsed_time)))
 	var living_drones = _get_living_drone_count()
+	var living_enemy_drones = _get_living_enemy_drone_count()
+	status_label.text = "RESEARCH HUNT | %s" % research_card_name if battle_type == "research_hunt" else "RESEARCH BATTLE"
 	flagship_label.text = "FLEET HP  %d/%d  |  FLAGSHIP %d/%d" % [_get_fleet_hp(), _get_fleet_max_hp(), flagship_hp, flagship_max_hp]
-	enemy_label.text = "ENEMY HP  %d/%d" % [enemy_hp, enemy_max_hp]
-	drone_label.text = "DRONES  %d/%d  |  DAMAGE %d PER SECOND" % [living_drones, drones.size(), mining_amount]
+	enemy_label.text = "%s  %d/%d%s" % [enemy_name.to_upper(), enemy_hp, enemy_max_hp, "  |  SHIELDED" if living_enemy_drones > 0 else ""]
+	drone_label.text = "YOUR DRONES %d/%d | DAMAGE %d/S" % [living_drones, drones.size(), mining_amount]
+	if not enemy_drones.is_empty():
+		drone_label.text += "  |  ENEMY DRONES %d/%d | %d DPS EACH" % [living_enemy_drones, enemy_drones.size(), enemy_drone_damage]
 	timer_label.text = "TIME  %02d" % remaining
 	flagship_hp_display.text = "FLAGSHIP  %d/%d" % [flagship_hp, flagship_max_hp]
-	enemy_hp_display.text = "ENEMY  %d/%d" % [enemy_hp, enemy_max_hp]
+	enemy_hp_display.text = "%s  %d/%d" % [enemy_name.to_upper(), enemy_hp, enemy_max_hp]
 	flagship_hp_display.position = flagship_position + Vector2(-90.0, -74.0)
 	enemy_hp_display.position = enemy_position + Vector2(-90.0, -74.0)
 
@@ -249,11 +406,28 @@ func _get_living_drone_count() -> int:
 			living_drones += 1
 	return living_drones
 
+func _get_living_enemy_drone_count() -> int:
+	var living_drones = 0
+	for drone in enemy_drones:
+		if int(drone["hp"]) > 0:
+			living_drones += 1
+	return living_drones
+
+func _get_first_living_enemy_drone_index() -> int:
+	for index in range(enemy_drones.size()):
+		if int(enemy_drones[index]["hp"]) > 0:
+			return index
+	return -1
+
+func _get_enemy_drone_position(index: int) -> Vector2:
+	var angle = float(enemy_drones[index]["angle"])
+	return enemy_position + Vector2(cos(angle), sin(angle)) * ENEMY_DRONE_ORBIT_RADIUS
+
 func _get_fleet_hp() -> int:
-	return flagship_hp + (refinery_hp if refinery_unlocked else 0)
+	return flagship_hp + (refinery_hp if refinery_unlocked else 0) + (hammond_hp if hammond_unlocked else 0) + (carrier_hp if carrier_unlocked else 0)
 
 func _get_fleet_max_hp() -> int:
-	return flagship_max_hp + (refinery_max_hp if refinery_unlocked else 0)
+	return flagship_max_hp + (refinery_max_hp if refinery_unlocked else 0) + (hammond_max_hp if hammond_unlocked else 0) + (carrier_max_hp if carrier_unlocked else 0)
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color("07111f"))
@@ -261,9 +435,6 @@ func _draw() -> void:
 		var star_pos = Vector2(fmod(float(star_index * 97 + 31), max(get_viewport_rect().size.x, 1.0)), fmod(float(star_index * 53 + 19), max(get_viewport_rect().size.y, 1.0)))
 		draw_circle(star_pos, 1.0 if star_index % 4 else 2.0, Color(0.55, 0.7, 0.82, 0.35))
 	draw_line(flagship_position, enemy_position, Color(0.35, 0.85, 0.95, 0.18), 2.0)
-	draw_circle(flagship_position, 34.0, Color(0.2, 0.75, 0.95, 0.12))
-	draw_circle(flagship_position, 22.0, Color("38b9d6"))
-	draw_circle(flagship_position, 9.0, Color("d7fbff"))
 	if refinery_unlocked and refinery_hp > 0:
 		var diamond = PackedVector2Array([
 			refinery_position + Vector2(0.0, -17.0),
@@ -273,9 +444,28 @@ func _draw() -> void:
 		])
 		draw_colored_polygon(diamond, Color("84e6b1"))
 		draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("d7ffe8"), 2.0)
+	if hammond_unlocked and hammond_hp > 0:
+		draw_rect(Rect2(hammond_position - Vector2(20.0, 10.0), Vector2(40.0, 20.0)), Color("d65b5b"))
+		draw_rect(Rect2(hammond_position - Vector2(20.0, 10.0), Vector2(40.0, 20.0)), Color("ffd1cc"), false, 2.0)
+	if carrier_unlocked and carrier_hp > 0:
+		var carrier_shape = PackedVector2Array([carrier_position + Vector2(-24, 0), carrier_position + Vector2(-10, -13), carrier_position + Vector2(22, -8), carrier_position + Vector2(22, 8), carrier_position + Vector2(-10, 13)])
+		draw_colored_polygon(carrier_shape, Color("8d78d6"))
+		draw_polyline(PackedVector2Array([carrier_shape[0], carrier_shape[1], carrier_shape[2], carrier_shape[3], carrier_shape[4], carrier_shape[0]]), Color("e0d8ff"), 2.0)
+	draw_circle(flagship_position, 34.0, Color(0.2, 0.75, 0.95, 0.12))
+	draw_circle(flagship_position, 22.0, Color("38b9d6"))
+	draw_circle(flagship_position, 9.0, Color("d7fbff"))
 	draw_circle(enemy_position, 54.0, Color(0.85, 0.1, 0.12, 0.12))
 	draw_circle(enemy_position, 38.0, Color("b71d2b"))
 	draw_circle(enemy_position - Vector2(12, 9), 10.0, Color(1.0, 0.42, 0.32, 0.65))
+	for index in range(enemy_drones.size()):
+		var enemy_drone = enemy_drones[index]
+		if int(enemy_drone["hp"]) <= 0:
+			continue
+		var enemy_drone_pos = _get_enemy_drone_position(index)
+		draw_line(enemy_drone_pos, enemy_position, Color(1.0, 0.35, 0.3, 0.18), 1.0)
+		draw_circle(enemy_drone_pos, 11.0, Color("c83a42"))
+		draw_circle(enemy_drone_pos, 4.0, Color("ffd0c7"))
+		draw_string(ThemeDB.fallback_font, enemy_drone_pos + Vector2(-20.0, -17.0), "%d/%d" % [int(enemy_drone["hp"]), enemy_drone_max_hp], HORIZONTAL_ALIGNMENT_CENTER, 40.0, 10, Color("ffc8bf"))
 	for drone in drones:
 		if int(drone["hp"]) <= 0:
 			continue
@@ -284,4 +474,9 @@ func _draw() -> void:
 		draw_line(pos, enemy_position, Color(0.8, 0.95, 1.0, 0.12), 1.0)
 		draw_circle(pos, 7.0, Color("a9efff"))
 		draw_circle(pos, 3.0, Color("ffffff"))
-		draw_string(ThemeDB.fallback_font, pos + Vector2(-18.0, -14.0), "%d/%d" % [int(drone["hp"]), DRONE_MAX_HP], HORIZONTAL_ALIGNMENT_CENTER, 36.0, 10, Color("d9f4ff"))
+		draw_string(ThemeDB.fallback_font, pos + Vector2(-18.0, -14.0), "%d/%d" % [int(drone["hp"]), drone_max_hp], HORIZONTAL_ALIGNMENT_CENTER, 36.0, 10, Color("d9f4ff"))
+	for fighter in fighter_drones:
+		var fighter_angle = float(fighter["angle"])
+		var fighter_pos = enemy_position + Vector2(cos(fighter_angle), sin(fighter_angle)) * (DRONE_ORBIT_RADIUS + 28.0)
+		draw_circle(fighter_pos, 5.0, Color("f4d06f"))
+		draw_line(fighter_pos, enemy_position, Color(0.95, 0.75, 0.3, 0.16), 1.0)
