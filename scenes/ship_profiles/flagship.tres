@@ -1,10 +1,9 @@
-[gd_resource type="Resource" script_class="ShipProfile" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="ShipProfile" format=3 uid="uid://dpmuw68tpf4bd"]
 
-[ext_resource type="Script" path="res://scripts/ship_profile.gd" id="1"]
+[ext_resource type="Script" uid="uid://cyenn85acxw1j" path="res://scripts/ship_profile.gd" id="1"]
 
 [resource]
 script = ExtResource("1")
 ship_id = &"flagship"
 display_name = "Flagship"
-category = 1
 roles = 6

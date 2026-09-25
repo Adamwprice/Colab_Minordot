@@ -10,7 +10,7 @@ func _ready():
 	var flotilla_scene = load("res://scenes/Flotilla.tscn")
 	var base = flotilla_scene.instantiate()
 	flotilla_node.add_child(base)
-	base.position = Vector2(50, 0)
+	base.position = resource_manager.get_fleet_start_position()
 	base.move_target = base.position
 	base.add_to_group("flotilla")
 	resource_manager.flotilla = base

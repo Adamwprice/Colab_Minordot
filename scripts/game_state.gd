@@ -1,102 +1,58 @@
 extends Node
 
+const Catalog = preload("res://scripts/ship_catalog.gd")
+
 signal ship_modifiers_changed
 
 const BATTLE_TIME_LIMIT := 60.0
-const BASE_RESEARCH_REWARD := 5
 const MAX_UPGRADE_BASE := 10
 const PRESTIGE_BOSS_TIER_INTERVAL := 5
 const FLAGSHIP_BASE_HP := 100
 const CLICK_RATE_CAP_UPGRADE := "click_multiplier"
 const REFINERY_GLOBAL_ORE_BONUS := 0.012
-const RESEARCH_CAP_COST_BASE := 10.0
-const RESEARCH_CAP_COST_MULTIPLIER := 1.36
-const RESEARCH_CAP_INCREASE := 10
-const PASSIVE_SINGLE_PURCHASES := [
-	"flagship_readiness",
-	"flagship_ion_thrusters",
-	"flagship_railgun",
-	"drone_mining_lasers",
-	"drone_ion_thrusts"
-]
-const PASSIVE_COSTS := {
-	"flagship_readiness": 15,
-	"flagship_ion_thrusters": 27,
-	"flagship_railgun": 40,
-	"drone_mining_lasers": 60,
-	"drone_ion_thrusts": 40
-}
-const PRESTIGE_LEVELS := {
-	1: {"cost": 90000, "ship": "refinery", "reward": "Unlock Romius, the global refinery ship."},
-	2: {"cost": 225000, "ship": "hammond", "reward": "Unlock Hammond, a military damage ship."},
-	3: {"cost": 500000, "ship": "drone_carrier", "reward": "Unlock the Drone Carrier and fighter drones."}
-}
-const DRONE_CAP_UPGRADES := ["speed", "mining", "mining_speed", "drone_multiplier", "capacity"]
-const FLAGSHIP_CAP_UPGRADES := ["click_output", "click_multiplier", "drones", "flagship_speed"]
+const RESEARCH_CAP_INCREASE := 2
+const RESEARCH_BATTLE_SCALE := 1.3
+var PASSIVE_RESEARCH_SHIPS := Catalog.get_passive_ship_map()
+var PASSIVE_SINGLE_PURCHASES := PASSIVE_RESEARCH_SHIPS.keys()
+var FIXED_RESEARCH_DIFFICULTY := Catalog.get_fixed_research_difficulty()
+var PRESTIGE_LEVELS := Catalog.get_prestige_levels()
+const DRONE_CAP_UPGRADES := ["speed", "mining", "mining_speed", "capacity"]
+const FLAGSHIP_CAP_UPGRADES := ["click_output", "click_multiplier", "drones", "flagship_speed", "refining"]
 const SHIP_PROFILES := {
 	&"flagship": preload("res://scenes/ship_profiles/flagship.tres"),
 	&"mining_drone": preload("res://scenes/ship_profiles/mining_drone.tres"),
 	&"refinery": preload("res://scenes/ship_profiles/refinery.tres"),
 	&"hammond": preload("res://scenes/ship_profiles/hammond.tres"),
-	&"drone_carrier": preload("res://scenes/ship_profiles/drone_carrier.tres")
+	&"drone_carrier": preload("res://scenes/ship_profiles/drone_carrier.tres"),
+	&"gethica": preload("res://scenes/ship_profiles/gethica.tres"),
+	&"ambrossa": preload("res://scenes/ship_profiles/ambrossa.tres")
 }
 
-const RESEARCH_CAP_UPGRADES := {
-	"flagship_command_capacity": {"ship": "flagship", "ore_upgrade": "drones", "name": "Command Capacity"},
-	"flagship_click_rate": {"ship": "flagship", "ore_upgrade": "click_multiplier", "name": "Click Rate"},
-	"refinery_command_capacity": {"ship": "refinery", "ore_upgrade": "refinery_command_capacity", "name": "Command Capacity"},
-	"refinery_click_rate": {"ship": "refinery", "ore_upgrade": "refinery_click_rate", "name": "Click Rate"},
-	"hammond_command_capacity": {"ship": "hammond", "ore_upgrade": "hammond_command_capacity", "name": "Command Capacity"},
-	"hammond_click_rate": {"ship": "hammond", "ore_upgrade": "hammond_click_rate", "name": "Click Rate"},
-	"drone_carrier_command_capacity": {"ship": "drone_carrier", "ore_upgrade": "drone_carrier_command_capacity", "name": "Command Capacity"},
-	"drone_carrier_click_rate": {"ship": "drone_carrier", "ore_upgrade": "drone_carrier_click_rate", "name": "Click Rate"}
+var RESEARCH_CAP_UPGRADES := Catalog.get_cap_definitions()
+const GENERAL_CAP_MIGRATION := {
+	"flagship_general_cap": ["flagship_command_capacity", "flagship_click_rate"],
+	"mining_drone_general_cap": [],
+	"refinery_general_cap": ["refinery_click_rate"],
+	"hammond_general_cap": ["hammond_command_capacity", "hammond_click_rate"],
+	"drone_carrier_general_cap": ["drone_carrier_command_capacity", "drone_carrier_click_rate"],
+	"ambrossa_general_cap": []
 }
 
-var research_points: int = 0
-var cap_levels := {
-	"click_output": 0,
-	"click_multiplier": 0,
-	"speed": 0,
-	"mining": 0,
-	"mining_speed": 0,
-	"drone_multiplier": 0,
-	"capacity": 0,
-	"drones": 0,
-	"flagship_speed": 0,
-	"refinery_command_capacity": 0,
-	"refinery_click_multiplier": 0,
-	"refinery_global_income_bonus": 0,
-	"flagship_command_capacity": 0,
-	"flagship_click_rate": 0,
-	"refinery_click_rate": 0,
-	"hammond_command_capacity": 0,
-	"hammond_click_rate": 0,
-	"drone_carrier_command_capacity": 0,
-	"drone_carrier_click_rate": 0
-}
+var cap_levels := Catalog.get_default_cap_levels()
 var pending_cap_levels := {}
-var passive_levels := {
-	"flagship_readiness": 0,
-	"flagship_ion_thrusters": 0,
-	"flagship_railgun": 0,
-	"drone_mining_lasers": 0,
-	"drone_ion_thrusts": 0
-}
+var passive_levels := Catalog.get_default_passive_levels()
 var pending_passive_levels := {}
 var boss_tier: int = 0
 var prestige_level: int = 0
 var prestige_ready: bool = false
 var auto_claim_rewards: bool = false
+var fleet_maneuver_enabled: bool = false
+var development_protocol_enabled: bool = false
 var ship_stat_modifiers: Array[ShipStatModifier] = []
 var claimed_prestige_rewards := {}
-var unlocked_ships := {
-	"refinery": false,
-	"hammond": false,
-	"drone_carrier": false
-}
+var unlocked_ships := Catalog.get_default_unlocked_ships()
 var ship_stats := {
 	"refinery": {
-		"command_capacity": 0,
 		"click_multiplier": 1.0,
 		"hull": 100,
 		"armor": 0,
@@ -107,6 +63,7 @@ var ship_stats := {
 var pending_battle := {}
 var research_card_unlocks := {}
 var research_hunt_count: int = 0
+var research_battle_attempts := {}
 var saved_run_state := {}
 var battle_return_pending: bool = false
 var battle_was_victory: bool = false
@@ -165,23 +122,23 @@ func _get_upgrade_ship_id(upgrade: String) -> StringName:
 		return &"mining_drone"
 	if FLAGSHIP_CAP_UPGRADES.has(upgrade):
 		return &"flagship"
-	if upgrade.begins_with("refinery_"):
-		return &"refinery"
+	for ship_id in Catalog.get_ship_ids():
+		if upgrade.begins_with("%s_" % ship_id):
+			return StringName(ship_id)
 	return &""
 
 func get_upgrade_cap(upgrade: String) -> int:
-	var cap = 50.0 if upgrade == "drone_carrier_command_capacity" else float(MAX_UPGRADE_BASE)
+	var cap = float(MAX_UPGRADE_BASE)
+	var ship_id = _get_upgrade_ship_id(upgrade)
+	if not ship_id.is_empty():
+		var ship_data = Catalog.get_ship_data(str(ship_id))
+		if not ship_data.is_empty() and upgrade.ends_with("_command_capacity"):
+			cap = float(ship_data.get("base_cap", MAX_UPGRADE_BASE))
 	for research_key in RESEARCH_CAP_UPGRADES:
 		var research_data: Dictionary = RESEARCH_CAP_UPGRADES[research_key]
-		if str(research_data["ore_upgrade"]) == upgrade:
+		if Array(research_data["ore_upgrades"]).has(upgrade):
 			cap += float(int(cap_levels.get(research_key, 0)) * RESEARCH_CAP_INCREASE)
 			break
-	var ship_id = _get_upgrade_ship_id(upgrade)
-	if ship_id.is_empty():
-		if upgrade.begins_with("hammond_"):
-			ship_id = &"hammond"
-		elif upgrade.begins_with("drone_carrier_"):
-			ship_id = &"drone_carrier"
 	if not ship_id.is_empty():
 		cap = resolve_ship_stat(ship_id, ShipProfile.STAT_UPGRADE_CAP, cap)
 	return max(0, int(round(cap)))
@@ -195,29 +152,16 @@ func get_click_rate_cap() -> int:
 func get_pending_click_rate_cap() -> int:
 	return get_pending_upgrade_cap(CLICK_RATE_CAP_UPGRADE)
 
-func get_research_cost(upgrade: String) -> int:
-	if not RESEARCH_CAP_UPGRADES.has(upgrade):
-		return 0
-	return int(ceil(RESEARCH_CAP_COST_BASE * pow(RESEARCH_CAP_COST_MULTIPLIER, float(int(cap_levels.get(upgrade, 0))))))
-
 func get_research_cap_value(upgrade: String) -> int:
 	if not RESEARCH_CAP_UPGRADES.has(upgrade):
 		return MAX_UPGRADE_BASE
-	var data: Dictionary = RESEARCH_CAP_UPGRADES[upgrade]
-	return get_upgrade_cap(str(data["ore_upgrade"]))
-
-func add_research_points(amount: int) -> void:
-	if amount > 0:
-		research_points += amount
+	return int(cap_levels.get(upgrade, 0)) * RESEARCH_CAP_INCREASE
 
 func get_passive_level(upgrade: String) -> int:
 	return int(passive_levels.get(upgrade, 0))
 
 func get_pending_passive_level(upgrade: String) -> int:
 	return get_passive_level(upgrade)
-
-func get_passive_cost(upgrade: String) -> int:
-	return int(PASSIVE_COSTS.get(upgrade, 0))
 
 func is_single_purchase_passive(upgrade: String) -> bool:
 	return PASSIVE_SINGLE_PURCHASES.has(upgrade)
@@ -244,6 +188,29 @@ func get_flagship_speed_multiplier() -> float:
 func get_flagship_battle_click_bonus() -> int:
 	return 10 if get_passive_level("flagship_railgun") > 0 else 0
 
+func get_flagship_picket_damage() -> float:
+	return 2.0 if get_passive_level("flagship_picket_array") > 0 else 0.0
+
+func is_fleet_maneuver_active() -> bool:
+	return is_fleet_maneuver_unlocked() and fleet_maneuver_enabled
+
+func is_fleet_maneuver_unlocked() -> bool:
+	return get_passive_level("flagship_fleet_maneuver") > 0
+
+func set_fleet_maneuver_enabled(enabled: bool) -> bool:
+	fleet_maneuver_enabled = enabled and is_fleet_maneuver_unlocked()
+	return fleet_maneuver_enabled
+
+func is_development_protocol_unlocked() -> bool:
+	return get_passive_level("flagship_development_protocol") > 0
+
+func is_manual_drone_control_unlocked() -> bool:
+	return get_passive_level("kradle_manual_control") > 0
+
+func set_development_protocol_enabled(enabled: bool) -> bool:
+	development_protocol_enabled = enabled and is_development_protocol_unlocked()
+	return development_protocol_enabled
+
 func get_prestige_data(target_prestige: int) -> Dictionary:
 	return PRESTIGE_LEVELS.get(target_prestige, {}).duplicate(true)
 
@@ -269,7 +236,10 @@ func get_next_prestige_cost() -> int:
 	return int(PRESTIGE_LEVELS.get(target, {}).get("cost", 0))
 
 func is_ship_unlocked(ship_key: String) -> bool:
-	return bool(unlocked_ships.get(ship_key, false))
+	if bool(unlocked_ships.get(ship_key, false)):
+		return true
+	var ship_data = Catalog.get_ship_data(ship_key)
+	return not ship_data.is_empty() and int(ship_data.get("rank", 0)) > 0 and prestige_level >= int(ship_data["rank"])
 
 func is_reward_claimed(reward_key: String) -> bool:
 	return bool(claimed_prestige_rewards.get(reward_key, false))
@@ -281,10 +251,13 @@ func get_prestige_reward_level(reward_key: String) -> int:
 	return -1
 
 func get_global_ore_multiplier() -> float:
-	var multiplier = 1.0
-	if is_ship_unlocked("refinery"):
-		multiplier += REFINERY_GLOBAL_ORE_BONUS
-	return multiplier
+	return 1.0
+
+func get_ship_display_name(ship_key: String) -> String:
+	return Catalog.get_display_name(ship_key)
+
+func get_ship_category(ship_key: String) -> String:
+	return Catalog.get_category(ship_key)
 
 func can_claim_prestige_reward(reward_key: String) -> bool:
 	return false
@@ -310,48 +283,13 @@ func get_effective_boss_tier() -> int:
 	return boss_tier + int(floor(float(prestige_level) / float(PRESTIGE_BOSS_TIER_INTERVAL)))
 
 func buy_cap_upgrade(upgrade: String) -> bool:
-	if not RESEARCH_CAP_UPGRADES.has(upgrade):
-		return false
-	var level = int(cap_levels.get(upgrade, 0))
-	if get_research_card_unlock_level(upgrade) <= level:
-		return false
-	var cost = get_research_cost(upgrade)
-	if research_points < cost:
-		return false
-	research_points -= cost
-	cap_levels[upgrade] = level + 1
-	pending_cap_levels[upgrade] = level + 1
-	emit_signal("ship_modifiers_changed")
-	return true
+	return false
 
 func buy_passive_upgrade(upgrade: String) -> bool:
-	if not passive_levels.has(upgrade):
-		return false
-	if is_single_purchase_passive(upgrade) and get_passive_level(upgrade) > 0:
-		return false
-	if get_research_card_unlock_level(upgrade) <= 0:
-		return false
-	var cost = get_passive_cost(upgrade)
-	if research_points < cost:
-		return false
-	research_points -= cost
-	passive_levels[upgrade] = get_passive_level(upgrade) + 1
-	pending_passive_levels[upgrade] = passive_levels[upgrade]
-	emit_signal("ship_modifiers_changed")
-	return true
+	return false
 
 func refund_cap_upgrade(upgrade: String) -> bool:
-	if not RESEARCH_CAP_UPGRADES.has(upgrade):
-		return false
-	var level = int(cap_levels.get(upgrade, 0))
-	if level <= 0:
-		return false
-	var refunded_cost = int(ceil(RESEARCH_CAP_COST_BASE * pow(RESEARCH_CAP_COST_MULTIPLIER, float(level - 1))))
-	cap_levels[upgrade] = level - 1
-	pending_cap_levels[upgrade] = level - 1
-	research_points += refunded_cost
-	emit_signal("ship_modifiers_changed")
-	return true
+	return false
 
 func refund_passive_upgrade(upgrade: String) -> bool:
 	return false
@@ -361,37 +299,46 @@ func commit_research() -> void:
 		pending_passive_levels[upgrade] = int(passive_levels[upgrade])
 
 func get_research_card_unlock_level(upgrade: String) -> int:
-	return max(0, int(research_card_unlocks.get(upgrade, 0)))
+	if RESEARCH_CAP_UPGRADES.has(upgrade):
+		return max(0, int(cap_levels.get(upgrade, 0)))
+	if passive_levels.has(upgrade):
+		return max(0, int(passive_levels.get(upgrade, 0)))
+	return 0
 
 func is_research_card_unlocked(upgrade: String) -> bool:
-	if RESEARCH_CAP_UPGRADES.has(upgrade):
-		return get_research_card_unlock_level(upgrade) > int(cap_levels.get(upgrade, 0))
 	return get_research_card_unlock_level(upgrade) > 0
 
 func _is_research_ship_available(ship_key: String) -> bool:
 	return ship_key == "flagship" or ship_key == "mining_drone" or is_ship_unlocked(ship_key)
 
-func get_research_hunt_candidates() -> Array[String]:
-	var candidates: Array[String] = []
-	for upgrade in RESEARCH_CAP_UPGRADES:
-		var data: Dictionary = RESEARCH_CAP_UPGRADES[upgrade]
-		if _is_research_ship_available(str(data["ship"])) and get_research_card_unlock_level(upgrade) <= int(cap_levels.get(upgrade, 0)):
-			candidates.append(str(upgrade))
-	for upgrade in passive_levels:
-		var ship_key = "mining_drone" if str(upgrade).begins_with("drone_") else "flagship"
-		if _is_research_ship_available(ship_key) and get_passive_level(upgrade) <= 0 and get_research_card_unlock_level(upgrade) <= 0:
-			candidates.append(str(upgrade))
-	return candidates
+func _get_research_card_ship(upgrade: String) -> String:
+	if RESEARCH_CAP_UPGRADES.has(upgrade):
+		return str(RESEARCH_CAP_UPGRADES[upgrade]["ship"])
+	return str(PASSIVE_RESEARCH_SHIPS.get(upgrade, ""))
 
-func create_research_hunt() -> Dictionary:
-	var candidates = get_research_hunt_candidates()
-	if candidates.is_empty():
+func can_battle_research_card(upgrade: String) -> bool:
+	var ship_key = _get_research_card_ship(upgrade)
+	if ship_key.is_empty() or not _is_research_ship_available(ship_key):
+		return false
+	if passive_levels.has(upgrade):
+		return get_passive_level(upgrade) <= 0
+	return RESEARCH_CAP_UPGRADES.has(upgrade)
+
+func get_research_battle_attempts(upgrade: String) -> int:
+	return max(0, int(research_battle_attempts.get(upgrade, 0)))
+
+func get_research_battle_multiplier(upgrade: String) -> float:
+	if RESEARCH_CAP_UPGRADES.has(upgrade):
+		return pow(RESEARCH_BATTLE_SCALE, float(int(cap_levels.get(upgrade, 0))))
+	return float(FIXED_RESEARCH_DIFFICULTY.get(upgrade, 1.5))
+
+func create_research_hunt(target_key: String) -> Dictionary:
+	if not can_battle_research_card(target_key):
 		return {}
 	var hunt_index = research_hunt_count
 	research_hunt_count += 1
-	var target_key = candidates[hunt_index % candidates.size()]
 	var rank = int(cap_levels.get(target_key, 0)) + 1 if RESEARCH_CAP_UPGRADES.has(target_key) else 1
-	var difficulty_scale = pow(1.5, float(max(0, rank - 1))) * (1.0 + float(prestige_level) * 0.2)
+	var difficulty_scale = get_research_battle_multiplier(target_key) * (1.0 + float(prestige_level) * 0.2)
 	var target_name = target_key.capitalize()
 	if RESEARCH_CAP_UPGRADES.has(target_key):
 		var cap_data: Dictionary = RESEARCH_CAP_UPGRADES[target_key]
@@ -497,7 +444,6 @@ func get_boss_name(boss_index: int) -> String:
 
 func get_save_state() -> Dictionary:
 	return {
-		"research_points": research_points,
 		"cap_levels": cap_levels.duplicate(true),
 		"pending_cap_levels": pending_cap_levels.duplicate(true),
 		"passive_levels": passive_levels.duplicate(true),
@@ -507,16 +453,18 @@ func get_save_state() -> Dictionary:
 		"ship_stats": ship_stats.duplicate(true),
 		"research_card_unlocks": research_card_unlocks.duplicate(true),
 		"research_hunt_count": research_hunt_count,
+		"research_battle_attempts": research_battle_attempts.duplicate(true),
 		"boss_tier": boss_tier,
 		"prestige_level": prestige_level,
 		"prestige_ready": prestige_ready,
-		"auto_claim_rewards": auto_claim_rewards
+		"auto_claim_rewards": auto_claim_rewards,
+		"fleet_maneuver_enabled": fleet_maneuver_enabled,
+		"development_protocol_enabled": development_protocol_enabled
 	}
 
 func apply_save_state(state: Dictionary) -> void:
 	if state.is_empty():
 		return
-	research_points = int(state.get("research_points", research_points))
 	if state.has("boss_tier"):
 		boss_tier = int(state.get("boss_tier", boss_tier))
 	else:
@@ -524,6 +472,8 @@ func apply_save_state(state: Dictionary) -> void:
 	prestige_level = max(0, int(state.get("prestige_level", prestige_level)))
 	prestige_ready = false
 	auto_claim_rewards = false
+	fleet_maneuver_enabled = bool(state.get("fleet_maneuver_enabled", false))
+	development_protocol_enabled = bool(state.get("development_protocol_enabled", false))
 	claimed_prestige_rewards = state.get("claimed_prestige_rewards", claimed_prestige_rewards).duplicate(true)
 	var saved_unlocked_ships = state.get("unlocked_ships", {})
 	for ship_key in unlocked_ships:
@@ -532,12 +482,15 @@ func apply_save_state(state: Dictionary) -> void:
 	var saved_ship_stats = state.get("ship_stats", {})
 	for ship_key in ship_stats:
 		if saved_ship_stats.has(ship_key):
-			ship_stats[ship_key] = saved_ship_stats[ship_key]
+			ship_stats[ship_key] = saved_ship_stats[ship_key].duplicate(true)
+	if ship_stats.has("refinery"):
+		ship_stats["refinery"].erase("command_capacity")
 	var saved_cap_levels = state.get("cap_levels", {})
 	var saved_pending_cap_levels = state.get("pending_cap_levels", saved_cap_levels)
 	for upgrade in cap_levels:
-		cap_levels[upgrade] = int(saved_cap_levels.get(upgrade, cap_levels[upgrade]))
-		pending_cap_levels[upgrade] = int(saved_pending_cap_levels.get(upgrade, cap_levels[upgrade]))
+		var legacy_upgrade = "drone_multiplier" if upgrade == "refining" else upgrade
+		cap_levels[upgrade] = int(saved_cap_levels.get(upgrade, saved_cap_levels.get(legacy_upgrade, cap_levels[upgrade])))
+		pending_cap_levels[upgrade] = int(saved_pending_cap_levels.get(upgrade, saved_pending_cap_levels.get(legacy_upgrade, cap_levels[upgrade])))
 	var saved_passive_levels = state.get("passive_levels", {})
 	var saved_pending_passive_levels = state.get("pending_passive_levels", saved_passive_levels)
 	for upgrade in passive_levels:
@@ -545,8 +498,21 @@ func apply_save_state(state: Dictionary) -> void:
 		var old_pending_level = int(saved_pending_passive_levels.get(upgrade, saved_level))
 		passive_levels[upgrade] = _sanitize_passive_level(upgrade, max(saved_level, old_pending_level))
 		pending_passive_levels[upgrade] = passive_levels[upgrade]
+	fleet_maneuver_enabled = fleet_maneuver_enabled and is_fleet_maneuver_unlocked()
+	development_protocol_enabled = development_protocol_enabled and is_development_protocol_unlocked()
 	research_card_unlocks = state.get("research_card_unlocks", {}).duplicate(true)
 	research_hunt_count = max(0, int(state.get("research_hunt_count", 0)))
+	research_battle_attempts = state.get("research_battle_attempts", {}).duplicate(true)
+	for general_key in GENERAL_CAP_MIGRATION:
+		if not saved_cap_levels.has(general_key):
+			var migrated_level = 0
+			var migrated_unlock = 0
+			for old_key in GENERAL_CAP_MIGRATION[general_key]:
+				migrated_level = max(migrated_level, int(saved_cap_levels.get(old_key, 0)))
+				migrated_unlock = max(migrated_unlock, int(research_card_unlocks.get(old_key, 0)))
+			cap_levels[general_key] = migrated_level
+			pending_cap_levels[general_key] = migrated_level
+			research_card_unlocks[general_key] = max(migrated_level, migrated_unlock)
 	# Purchased cards from older saves remain usable after card hunts were introduced.
 	for upgrade in cap_levels:
 		if int(cap_levels[upgrade]) > 0:
@@ -572,13 +538,6 @@ func prepare_battle(run_state: Dictionary, battle_stats: Dictionary) -> void:
 	surviving_drone_count = 0
 	last_battle_message = ""
 
-func calculate_research_reward(elapsed_time: float, field_level: int) -> int:
-	var remaining_time = max(0.0, BATTLE_TIME_LIMIT - elapsed_time)
-	var speed_bonus = int(floor(remaining_time / 20.0))
-	var field_penalty = min(9, int(floor(float(field_level) / 3.0)))
-	var boss_bonus = int(floor(float(boss_tier) / 2.0))
-	return max(1, BASE_RESEARCH_REWARD + speed_bonus + boss_bonus - field_penalty)
-
 func _boss_tier_from_difficulty(difficulty: int) -> int:
 	var tier = 0
 	var remaining_difficulty = max(1, difficulty)
@@ -593,26 +552,33 @@ func complete_battle(victory: bool, elapsed_time: float, battle_surviving_drone_
 	battle_return_pending = true
 	battle_was_victory = victory
 	battle_was_prestige = false
+	battle_advance_field_pending = true
 	surviving_drone_count = max(0, battle_surviving_drone_count)
+	if get_passive_level("parallax_broad_tether") > 0:
+		var original_drone_count = max(0, int(pending_battle.get("drone_count", surviving_drone_count)))
+		for lost_drone in range(max(0, original_drone_count - surviving_drone_count)):
+			if randf() < 0.05:
+				surviving_drone_count += 1
 	if battle_type == "research_hunt":
 		if victory:
 			var card_key = str(pending_battle.get("research_card", ""))
 			var card_rank = max(1, int(pending_battle.get("research_card_rank", 1)))
-			if not card_key.is_empty():
-				research_card_unlocks[card_key] = max(get_research_card_unlock_level(card_key), card_rank)
-			reward = calculate_research_reward(elapsed_time, int(pending_battle.get("field_level", 0))) + int(floor(float(card_rank - 1) / 2.0))
-			research_points += reward
-			last_battle_message = "Research hunt won: %s unlocked, +%d research" % [str(pending_battle.get("research_card_name", "card")), reward]
+			if RESEARCH_CAP_UPGRADES.has(card_key):
+				cap_levels[card_key] = max(int(cap_levels.get(card_key, 0)), card_rank)
+				pending_cap_levels[card_key] = cap_levels[card_key]
+				research_card_unlocks[card_key] = cap_levels[card_key]
+			elif passive_levels.has(card_key):
+				passive_levels[card_key] = 1
+				pending_passive_levels[card_key] = 1
+				research_card_unlocks[card_key] = 1
+			emit_signal("ship_modifiers_changed")
+			last_battle_message = "Research victory: %s applied" % str(pending_battle.get("research_card_name", "card"))
 		else:
 			last_battle_message = "Research hunt failed: returned to mining"
 	elif victory:
-		reward = calculate_research_reward(elapsed_time, int(pending_battle.get("field_level", 0)))
-		research_points += reward
 		boss_tier += 1
-		battle_advance_field_pending = true
-		last_battle_message = "Battle won: +%d research, enemy fleet strengthened" % reward
+		last_battle_message = "Battle won: enemy fleet strengthened"
 	else:
-		battle_advance_field_pending = true
 		last_battle_message = "Battle failed: returned to mining"
 	pending_battle = {}
 	return reward
@@ -621,11 +587,22 @@ func reset_for_prestige(force: bool = false) -> bool:
 	var target_prestige = prestige_level + 1
 	if not PRESTIGE_LEVELS.has(target_prestige):
 		return false
-	commit_research()
 	prestige_level = target_prestige
 	boss_tier = 0
 	prestige_ready = false
+	for upgrade in cap_levels:
+		cap_levels[upgrade] = 0
+		pending_cap_levels[upgrade] = 0
+	for upgrade in passive_levels:
+		passive_levels[upgrade] = 0
+		pending_passive_levels[upgrade] = 0
+	development_protocol_enabled = false
+	fleet_maneuver_enabled = false
+	research_card_unlocks.clear()
+	research_battle_attempts.clear()
+	research_hunt_count = 0
 	_synchronize_prestige_rewards()
+	emit_signal("ship_modifiers_changed")
 	return true
 
 func consume_battle_return_pending() -> bool:

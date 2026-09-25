@@ -3,7 +3,9 @@ extends Resource
 
 enum Category {
 	CIVILIAN,
-	MILITARY
+	MILITARY,
+	SUPPORT,
+	UTILITY
 }
 
 enum Role {

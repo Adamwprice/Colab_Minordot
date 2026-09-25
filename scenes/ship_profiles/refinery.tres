@@ -6,4 +6,5 @@
 script = ExtResource("1")
 ship_id = &"refinery"
 display_name = "Romius"
+category = 2
 roles = 40
