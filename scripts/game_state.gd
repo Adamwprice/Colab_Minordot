@@ -51,6 +51,7 @@ var development_protocol_enabled: bool = false
 var ship_stat_modifiers: Array[ShipStatModifier] = []
 var claimed_prestige_rewards := {}
 var unlocked_ships := Catalog.get_default_unlocked_ships()
+var dev_ship_overrides := {}
 var ship_stats := {
 	"refinery": {
 		"click_multiplier": 1.0,
@@ -235,7 +236,20 @@ func get_next_prestige_cost() -> int:
 	var target = prestige_level + 1
 	return int(PRESTIGE_LEVELS.get(target, {}).get("cost", 0))
 
+func dev_set_ship_enabled(ship_key: String, enabled: bool) -> bool:
+	var ship_data = Catalog.get_ship_data(ship_key)
+	if ship_data.is_empty() or int(ship_data.get("rank", 0)) <= 0:
+		return false
+	dev_ship_overrides[ship_key] = enabled
+	emit_signal("ship_modifiers_changed")
+	return enabled
+
+func has_dev_ship_override(ship_key: String) -> bool:
+	return dev_ship_overrides.has(ship_key)
+
 func is_ship_unlocked(ship_key: String) -> bool:
+	if dev_ship_overrides.has(ship_key):
+		return bool(dev_ship_overrides[ship_key])
 	if bool(unlocked_ships.get(ship_key, false)):
 		return true
 	var ship_data = Catalog.get_ship_data(ship_key)
@@ -450,6 +464,7 @@ func get_save_state() -> Dictionary:
 		"pending_passive_levels": pending_passive_levels.duplicate(true),
 		"claimed_prestige_rewards": claimed_prestige_rewards.duplicate(true),
 		"unlocked_ships": unlocked_ships.duplicate(true),
+		"dev_ship_overrides": dev_ship_overrides.duplicate(true),
 		"ship_stats": ship_stats.duplicate(true),
 		"research_card_unlocks": research_card_unlocks.duplicate(true),
 		"research_hunt_count": research_hunt_count,
@@ -478,6 +493,7 @@ func apply_save_state(state: Dictionary) -> void:
 	var saved_unlocked_ships = state.get("unlocked_ships", {})
 	for ship_key in unlocked_ships:
 		unlocked_ships[ship_key] = bool(saved_unlocked_ships.get(ship_key, unlocked_ships[ship_key]))
+	dev_ship_overrides = state.get("dev_ship_overrides", {}).duplicate(true)
 	_synchronize_prestige_rewards()
 	var saved_ship_stats = state.get("ship_stats", {})
 	for ship_key in ship_stats:

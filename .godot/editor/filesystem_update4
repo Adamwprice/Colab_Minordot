@@ -1,12 +1,8 @@
+res://scripts/ui.gd
+res://scripts/game_state.gd
 res://scripts/map.gd
 res://scripts/resource_manager.gd
-res://scripts/flotilla.gd
-res://scripts/ui.gd
-res://scripts/battle.gd
-res://scripts/game_state.gd
-res://scenes/Main.tscn
-res://scripts/main.gd
-res://scripts/drone.gd
 res://scripts/ship_catalog.gd
-res://scenes/ship_profiles/drone_carrier.tres
-res://scenes/ship_profiles/refinery.tres
+res://scripts/battle.gd
+res://scenes/Main.tscn
+res://scenes/_upgrade_audit.gd

@@ -1051,10 +1051,9 @@ func _layout_research_rows() -> void:
 func _is_research_ship_unlocked(ship_key: String, game_state: Node) -> bool:
 	if ship_key.is_empty():
 		return true
-	if game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked(ship_key):
+	if ship_key in ["flagship", "mining_drone"]:
 		return true
-	var ship_data = Catalog.get_ship_data(ship_key)
-	return game_state and not ship_data.is_empty() and int(game_state.prestige_level) >= int(ship_data.get("rank", 999))
+	return game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked(ship_key)
 
 func _build_rewards_tab() -> void:
 	var game_state = get_node_or_null("/root/GameState")
@@ -1090,7 +1089,7 @@ func _build_rewards_tab() -> void:
 		var reward_description = Label.new()
 		reward_description.text = "REWARD  %s" % str(prestige_data["reward"])
 		reward_description.position = Vector2(18.0, 70.0)
-		reward_description.size = Vector2(820.0, 36.0)
+		reward_description.size = Vector2(650.0, 36.0)
 		reward_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		reward_description.add_theme_font_size_override("font_size", 12)
 		reward_description.add_theme_color_override("font_color", Color("d9f4ff"))
@@ -1111,7 +1110,18 @@ func _build_rewards_tab() -> void:
 		attempt_button.size = Vector2(176.0, 40.0)
 		reward_panel.add_child(attempt_button)
 		attempt_button.pressed.connect(Callable(self, "_on_prestige_purchase_pressed").bind(target_prestige))
-		reward_entries[target_prestige] = {"status": status_label, "button": attempt_button}
+
+		var ship_key = str(prestige_data.get("ship", ""))
+		var dev_ship_button = Button.new()
+		dev_ship_button.name = "Dev%sShipToggle" % ship_key.to_pascal_case()
+		dev_ship_button.text = "DEV SHIP: OFF"
+		dev_ship_button.toggle_mode = true
+		dev_ship_button.position = Vector2(690.0, 68.0)
+		dev_ship_button.size = Vector2(164.0, 30.0)
+		dev_ship_button.tooltip_text = "Add or remove only %s for testing. Prestige, ore, research, and ship upgrade levels are unchanged." % Catalog.get_display_name(ship_key)
+		reward_panel.add_child(dev_ship_button)
+		dev_ship_button.pressed.connect(Callable(self, "_on_dev_ship_toggle_pressed").bind(ship_key))
+		reward_entries[target_prestige] = {"status": status_label, "button": attempt_button, "dev_button": dev_ship_button, "ship": ship_key}
 	rewards_scroll_content.custom_minimum_size.y = max(540.0, 8.0 + prestige_boss_levels.size() * 126.0)
 
 func _format_number(value: int) -> String:
@@ -1713,7 +1723,7 @@ func _process(_delta):
 		var drone_level = int(resource_manager.drone_level)
 		var flagship_drone_count = int(resource_manager.get_active_drone_count("flagship"))
 		var flagship_speed_level = int(resource_manager.flagship_speed_level)
-		var click_gain = float(resource_manager.get_click_output()) * resource_manager.get_refinery_click_multiplier() * resource_manager.get_global_ore_multiplier()
+		var click_gain = float(resource_manager.get_click_output()) * resource_manager.get_refinery_click_multiplier() * resource_manager.get_ship_ore_multiplier("flagship")
 		_update_ore_labels(float(resource_manager.total_resources))
 		var click_income_rate = float(resource_manager.get_ship_income_rate("flagship"))
 		var drone_income_rate = float(resource_manager.get_ship_income_rate("mining_drone"))
@@ -1940,12 +1950,12 @@ func _update_ship_upgrade_huds() -> void:
 					row["button"].disabled = true
 					row["button"].tooltip_text = "Activate this through its research battle."
 					continue
-				var level = int(resource_manager.get_ship_upgrade_level(owner_ship, stat_key))
-				var cap = int(resource_manager.get_ship_upgrade_cap(owner_ship, stat_key))
-				var drone_stat = str(resource_manager._get_ship_mining_drone_stat(owner_ship))
-				var replacing_drone = stat_key == drone_stat and not drone_stat.is_empty() and resource_manager.has_missing_owned_drones(owner_ship)
-				var cost = int(resource_manager.get_ship_upgrade_cost(owner_ship, stat_key, 0 if replacing_drone else -1))
-				if stat_key == drone_stat and not drone_stat.is_empty():
+				var level = int(resource_manager.get_companion_upgrade_level(ship_key, stat_key)) if is_companion else int(resource_manager.get_ship_upgrade_level(owner_ship, stat_key))
+				var cap = int(resource_manager.get_companion_upgrade_cap(ship_key, stat_key)) if is_companion else int(resource_manager.get_ship_upgrade_cap(owner_ship, stat_key))
+				var drone_stat = "" if is_companion else str(resource_manager._get_ship_mining_drone_stat(owner_ship))
+				var replacing_drone = not is_companion and stat_key == drone_stat and not drone_stat.is_empty() and resource_manager.has_missing_owned_drones(owner_ship)
+				var cost = int(resource_manager.get_companion_upgrade_cost(ship_key, stat_key)) if is_companion else int(resource_manager.get_ship_upgrade_cost(owner_ship, stat_key, 0 if replacing_drone else -1))
+				if not is_companion and stat_key == drone_stat and not drone_stat.is_empty():
 					effect = "%d/%d active" % [resource_manager.get_active_drone_count(owner_ship), level]
 				row["level"].text = "L%d" % level
 				row["effect"].text = effect
@@ -1989,6 +1999,12 @@ func _update_rewards_panel_values() -> void:
 			attempt_button.disabled = not can_purchase
 			attempt_button.text = "Completed" if completed else "Prestige"
 			attempt_button.tooltip_text = "Reward permanently active." if completed else ("Consume %s ore and reset this run." % _format_number(cost) if is_next else "Complete the previous prestige first.")
+		var dev_ship_button = reward_entries[target_prestige].get("dev_button") as Button
+		var ship_key = str(reward_entries[target_prestige].get("ship", ""))
+		if dev_ship_button:
+			var ship_enabled = game_state.is_ship_unlocked(ship_key)
+			dev_ship_button.button_pressed = ship_enabled
+			dev_ship_button.text = "DEV SHIP: ON" if ship_enabled else "DEV SHIP: OFF"
 
 func _update_prestige_button_state() -> void:
 	var game_state = get_node_or_null("/root/GameState")
@@ -2038,7 +2054,8 @@ func _update_fleet_maneuver_button() -> void:
 	var enabled = unlocked and bool(game_state.fleet_maneuver_enabled)
 	fleet_maneuver_button.visible = unlocked and not _has_open_research_overlay()
 	fleet_maneuver_button.button_pressed = enabled
-	fleet_maneuver_button.text = "Maneuver: ON" if enabled else "Maneuver: OFF"
+	var compact_label = fleet_maneuver_button.size.x < 100.0
+	fleet_maneuver_button.text = ("Move: ON" if enabled else "Move: OFF") if compact_label else ("Maneuver: ON" if enabled else "Maneuver: OFF")
 	fleet_maneuver_button.tooltip_text = "Fleet Maneuver automatically approaches the nearest mineable node until you issue a manual movement order."
 
 func _on_development_protocol_toggle_pressed() -> void:
@@ -2058,7 +2075,8 @@ func _update_development_protocol_button() -> void:
 	var enabled = unlocked and bool(game_state.development_protocol_enabled)
 	development_protocol_button.visible = unlocked and not _has_open_research_overlay()
 	development_protocol_button.button_pressed = enabled
-	development_protocol_button.text = "Auto Buy: ON" if enabled else "Auto Buy: OFF"
+	var compact_label = development_protocol_button.size.x < 100.0
+	development_protocol_button.text = ("Auto: ON" if enabled else "Auto: OFF") if compact_label else ("Auto Buy: ON" if enabled else "Auto Buy: OFF")
 	development_protocol_button.tooltip_text = "Development Protocol buys the cheapest affordable ore upgrade every 5 seconds. It never purchases prestige or research rewards."
 
 func _refresh_drones_after_reward() -> void:
@@ -2131,6 +2149,7 @@ func _set_mining_hud_visibility(visible: bool) -> void:
 	if right_ore_label:
 		right_ore_label.visible = visible
 	_update_development_protocol_button()
+	_update_fleet_maneuver_button()
 	if ore_upgrade_scroll:
 		ore_upgrade_scroll.visible = visible
 	for button in ore_upgrade_tab_buttons.values():
@@ -2197,6 +2216,18 @@ func _on_dev_add_ore_pressed() -> void:
 
 func _on_dev_prestige_pressed() -> void:
 	_perform_prestige(true)
+
+func _on_dev_ship_toggle_pressed(ship_key: String) -> void:
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state == null or not game_state.has_method("dev_set_ship_enabled"):
+		return
+	var enabled = not game_state.is_ship_unlocked(ship_key)
+	game_state.dev_set_ship_enabled(ship_key, enabled)
+	if resource_manager and resource_manager.has_method("apply_dev_ship_toggle"):
+		resource_manager.apply_dev_ship_toggle(ship_key, enabled)
+	_show_action("Dev: %s %s" % [Catalog.get_display_name(ship_key), "added" if enabled else "removed"])
+	_layout_hud()
+	_update_expedition_panel_values()
 
 func _on_prestige_pressed() -> void:
 	_perform_prestige(false)
@@ -2415,13 +2446,13 @@ func _build_ship_upgrade_hud(ship_key: String, panel_style: StyleBoxFlat, is_com
 	var ship_data = Catalog.get_companion_data(ship_key) if is_companion else Catalog.get_ship_data(ship_key)
 	var rows: Array = []
 	var ore_rows = Array(ship_data.get("ore", [])) if is_companion else Catalog.get_ore_rows(ship_key)
+	if ore_rows.is_empty():
+		return
 	for ore_row in ore_rows:
-		if not is_companion and Catalog.is_companion_ore_stat(ship_key, str(ore_row.get("stat", ""))):
-			continue
 		rows.append({
 			"label": str(ore_row["label"]),
 			"stat_key": str(ore_row.get("stat", "")),
-			"owner_ship": str(ore_row.get("owner_ship", ship_key)),
+			"owner_ship": ship_key,
 			"requires_ship": str(ore_row.get("requires_ship", ship_data.get("required_ship", ""))),
 			"fixed_passive": str(ore_row.get("fixed_passive", "")),
 			"description": str(ore_row.get("effect", ore_row.get("description", "")))
@@ -2462,7 +2493,8 @@ func _build_ship_upgrade_hud(ship_key: String, panel_style: StyleBoxFlat, is_com
 		button.size = Vector2(30.0, 26.0)
 		add_child(button)
 		if str(row_data["fixed_passive"]).is_empty():
-			button.pressed.connect(Callable(self, "_on_upgrade_ship_stat").bind(str(row_data["owner_ship"]), str(row_data["stat_key"])))
+			var callback = "_on_upgrade_companion_stat" if is_companion else "_on_upgrade_ship_stat"
+			button.pressed.connect(Callable(self, callback).bind(ship_key, str(row_data["stat_key"])))
 		else:
 			button.disabled = true
 		var name_label = Label.new()
@@ -2504,6 +2536,12 @@ func _on_upgrade_ship_stat(ship_key: String, stat_key: String) -> void:
 			if profile:
 				display_name = profile.display_name
 		_show_action("%s %s upgraded" % [display_name, stat_key.capitalize()])
+	else:
+		_show_action("Upgrade unavailable")
+
+func _on_upgrade_companion_stat(companion_id: String, stat_key: String) -> void:
+	if resource_manager and resource_manager.upgrade_companion_stat(companion_id, stat_key):
+		_show_action("%s %s upgraded" % [Catalog.get_companion_display_name(companion_id), stat_key.capitalize()])
 	else:
 		_show_action("Upgrade unavailable")
 

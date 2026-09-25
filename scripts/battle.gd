@@ -23,7 +23,7 @@ var click_rate_cap: float = 10.0
 var hold_click_rate: float = 2.0
 var last_click_time: float = -1.0
 var last_hold_click_time: float = -1.0
-var mining_amount: int = 1
+var mining_amount: float = 1.0
 var drone_max_hp: int = DRONE_MAX_HP
 var boss_tier: int = 0
 var enemy_max_hp: int = ENEMY_MAX_HP
@@ -60,7 +60,7 @@ var gethica_hp: int = 0
 var ambrossa_unlocked: bool = false
 var ambrossa_max_hp: int = 100
 var ambrossa_hp: int = 0
-var fighter_drone_damage: int = 2
+var fighter_drone_damage: float = 2.0
 var fighter_drone_speed: float = 1.4
 var fighter_drones: Array = []
 var research_card_name: String = ""
@@ -129,7 +129,7 @@ func _ready() -> void:
 	click_rate_cap = max(1.0, float(data.get("click_rate_cap", 10.0)))
 	hold_click_rate = clamp(float(data.get("hold_click_rate", 2.0)), 1.0, click_rate_cap)
 	picket_damage = max(0.0, float(data.get("picket_damage", 0.0)))
-	mining_amount = int(data.get("mining_amount", 1))
+	mining_amount = max(0.0, float(data.get("mining_amount", 1.0)))
 	drone_max_hp = max(1, int(data.get("drone_max_hp", DRONE_MAX_HP)))
 	boss_tier = max(0, int(data.get("boss_tier", 0)))
 	if battle_type != "standard":
@@ -177,7 +177,7 @@ func _ready() -> void:
 	for ship in additional_fleet_ships:
 		ship["hp"] = int(ship.get("max_hp", 100))
 	starburst_unlocked = bool(data.get("starburst_unlocked", false))
-	starburst_damage = max(1, int(data.get("starburst_damage", 1)))
+	starburst_damage = max(1, int(data.get("starburst_damage", 20)))
 	starburst_interval = max(1.0, float(data.get("starburst_interval", 10.0)))
 	starburst_opening_pending = bool(data.get("starburst_opening", false))
 	starburst_return_run = bool(data.get("starburst_return_run", false))
@@ -193,21 +193,23 @@ func _ready() -> void:
 	ravager_siege_pending = bool(data.get("ravager_siege", false))
 	ravager_cracking = bool(data.get("ravager_cracking", false))
 	ravager_polarised = bool(data.get("ravager_polarised", false))
-	fighter_drone_damage = max(0, int(data.get("fighter_drone_damage", 2)))
+	fighter_drone_damage = max(0.0, float(data.get("fighter_drone_damage", 2.0)))
 	fighter_drone_speed = max(0.1, float(data.get("fighter_drone_speed", 1.4)))
 	research_card_name = str(data.get("research_card_name", ""))
 	var fighter_count = max(0, int(data.get("fighter_drone_count", 0)))
 	for index in range(fighter_count):
 		fighter_drones.append({
 			"angle": TAU * float(index) / max(float(fighter_count), 1.0),
-			"attack_timer": randf_range(0.0, DRONE_ATTACK_INTERVAL)
+			"attack_timer": randf_range(0.0, DRONE_ATTACK_INTERVAL),
+			"damage_bank": 0.0
 		})
 	var drone_count = int(data.get("drone_count", 0))
 	for index in range(drone_count):
 		drones.append({
 			"hp": drone_max_hp,
 			"angle": TAU * float(index) / max(float(drone_count), 1.0),
-			"attack_timer": randf_range(0.0, DRONE_ATTACK_INTERVAL)
+			"attack_timer": randf_range(0.0, DRONE_ATTACK_INTERVAL),
+			"damage_bank": 0.0
 		})
 	_build_ui()
 	get_viewport().size_changed.connect(Callable(self, "_layout_battle_ui"))
@@ -300,13 +302,21 @@ func _process(delta: float) -> void:
 		drone["attack_timer"] = float(drone["attack_timer"]) + delta
 		if float(drone["attack_timer"]) >= DRONE_ATTACK_INTERVAL:
 			drone["attack_timer"] = 0.0
-			_damage_active_enemy(mining_amount)
+			drone["damage_bank"] = float(drone["damage_bank"]) + mining_amount
+			var drone_damage = int(floor(float(drone["damage_bank"])))
+			if drone_damage > 0:
+				drone["damage_bank"] = float(drone["damage_bank"]) - float(drone_damage)
+				_damage_active_enemy(drone_damage)
 	for fighter in fighter_drones:
 		fighter["angle"] = fmod(float(fighter["angle"]) + delta * fighter_drone_speed, TAU)
 		fighter["attack_timer"] = float(fighter["attack_timer"]) + delta
 		if float(fighter["attack_timer"]) >= DRONE_ATTACK_INTERVAL:
 			fighter["attack_timer"] = 0.0
-			_damage_active_enemy(_get_military_attack_damage(fighter_drone_damage))
+			fighter["damage_bank"] = float(fighter["damage_bank"]) + fighter_drone_damage
+			var fighter_damage = int(floor(float(fighter["damage_bank"])))
+			if fighter_damage > 0:
+				fighter["damage_bank"] = float(fighter["damage_bank"]) - float(fighter_damage)
+				_damage_active_enemy(_get_military_attack_damage(fighter_damage))
 	if starburst_unlocked and _is_additional_ship_alive("starburst"):
 		starburst_timer += delta
 		if starburst_opening_pending or starburst_timer >= starburst_interval:
@@ -591,7 +601,7 @@ func _update_labels() -> void:
 	status_label.text = "RESEARCH HUNT | %s" % research_card_name if battle_type == "research_hunt" else "FLEET BATTLE"
 	flagship_label.text = "FLEET HP  %d/%d  |  FLAGSHIP %d/%d" % [_get_fleet_hp(), _get_fleet_max_hp(), flagship_hp, flagship_max_hp]
 	enemy_label.text = "%s  %d/%d%s" % [enemy_name.to_upper(), enemy_hp, enemy_max_hp, "  |  SHIELDED" if living_enemy_drones > 0 else ""]
-	drone_label.text = "YOUR DRONES %d/%d | DAMAGE %d/S" % [living_drones, drones.size(), mining_amount]
+	drone_label.text = "YOUR DRONES %d/%d | DAMAGE %.2f/S" % [living_drones, drones.size(), mining_amount]
 	if picket_damage > 0.0:
 		drone_label.text += "  |  PICKET %.1f DPS" % picket_damage
 	if hammond_unlocked and hammond_hp > 0:

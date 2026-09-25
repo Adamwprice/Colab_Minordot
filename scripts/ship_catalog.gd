@@ -85,7 +85,7 @@ const SHIPS := {
 		"ore": [
 			{"label": "INDUSTRIAL LINK", "stat": "industrial_link", "cost": 2500, "effect": "+10% nearby drone mining speed"},
 			{"label": "STORAGE BINS", "stat": "storage_bins", "cost": 200, "effect": "+10 drone cargo"},
-			{"label": "OPTIMISER LENS", "stat": "optimizer_lens", "cost": 125, "effect": "Atlas aura click bonus"},
+			{"label": "OPTIMISER LENS", "stat": "optimizer_lens", "cost": 125, "effect": "+100% click income within Atlas range"},
 			{"label": "SPEED", "stat": "speed", "cost": 100, "effect": "+10 movement speed"}
 		],
 		"research": [
@@ -106,13 +106,13 @@ const SHIPS := {
 			{"label": "Heavy Furnace", "key": "refinery_heavy_furnaces", "description": "Double Romius Furnace bonuses.", "difficulty": 3.0},
 			{"label": "Waste Processes", "key": "refinery_waste_processes", "description": "Produce 0.25 bonus ore for every 10 ore earned.", "difficulty": 3.0}
 		],
-		"offset": Vector2(-24, 24)
+		"offset": Vector2(-14, 32)
 	},
 	"gethica": {
 		"rank": 6, "name": "Gethica", "category": "utility",
 		"description": "A science vessel for richer systems and fleet coordination.",
 		"ore": [
-			{"label": "SPECTROMETER ALPHA", "stat": "spectrometer_alpha", "cost": 1750, "effect": "+100 normal field ore"},
+			{"label": "SPECTROMETER ALPHA", "stat": "spectrometer_alpha", "cost": 1750, "effect": "+100 ore to every normal node"},
 			{"label": "LOCAL SFC", "stat": "local_sfc", "cost": 600, "effect": "+1 fleet ship speed"},
 			{"label": "DRONE FC", "stat": "drone_fc", "cost": 500, "effect": "+0.5 all drone speed"},
 			{"label": "FLEET ADJUSTER", "stat": "fleet_adjuster", "cost": 900, "effect": "+100 click-mining range"}
@@ -148,7 +148,7 @@ const SHIPS := {
 			{"label": "Reinforced Framework", "key": "hammond_reinforced_framework", "description": "Increase Hammond hull and armor effectiveness by 5%.", "difficulty": 4.0},
 			{"label": "Fighter Bays", "key": "hammond_fighter_bays", "description": "Install a fixed wing of five fighters.", "difficulty": 4.5}
 		],
-		"offset": Vector2(40, -44)
+		"offset": Vector2(40, -56)
 	},
 	"nelson": {
 		"rank": 9, "name": "Nelson", "category": "civilian",
@@ -297,7 +297,7 @@ const SHIPS := {
 			{"label": "Monocrystalline", "key": "stapledon_monocrystalline", "description": "Increase solar income by 20%.", "difficulty": 6.0},
 			{"label": "Nanofilm", "key": "stapledon_nanofilm", "description": "Reduce solar collection time by 2%.", "difficulty": 6.0}
 		],
-		"offset": Vector2(-84, 0)
+		"offset": Vector2(-96, 10)
 	},
 	"tarrip": {
 		"rank": 19, "name": "Tarrip", "category": "civilian",
@@ -312,7 +312,7 @@ const SHIPS := {
 			{"label": "Efficient Bureaucracy", "key": "tarrip_efficient_bureaucracy", "description": "Trade drones work 25% faster.", "difficulty": 6.5},
 			{"label": "Specialised Cargo", "key": "tarrip_specialised_cargo", "description": "Double trade-drone cargo.", "difficulty": 6.5}
 		],
-		"offset": Vector2(-70, 46)
+		"offset": Vector2(-30, 56)
 	},
 	"elysium_air": {
 		"rank": 20, "name": "Elysium Air", "category": "civilian",
@@ -341,11 +341,7 @@ const COMPANIONS := {
 	"fighter": {
 		"name": "Fighter Drones", "required_ship": "hammond",
 		"description": "Combat drones launched by Hammond and Brooder.",
-		"ore": [
-			{"label": "HAMMOND WING", "fixed_passive": "hammond_fighter_bays", "description": "Five fixed fighters when Fighter Bays research is active.", "requires_ship": "hammond"},
-			{"label": "FIGHTER BAYS", "owner_ship": "drone_carrier", "stat": "fighter_bays", "description": "+1 battle fighter", "requires_ship": "drone_carrier"},
-			{"label": "ACCELERATION", "owner_ship": "drone_carrier", "stat": "acceleration", "description": "+0.5% outbound drone speed", "requires_ship": "drone_carrier"}
-		],
+		"ore": [],
 		"research": [
 			{"label": "Fighter Bays", "key": "hammond_fighter_bays", "description": "Install Hammond's fixed wing of five fighters.", "requires_ship": "hammond"},
 			{"label": "Drone Reconfiguration", "key": "brooder_drone_reconfiguration", "description": "Increase every drone type's primary stats by 5%.", "requires_ship": "drone_carrier"}
@@ -354,12 +350,7 @@ const COMPANIONS := {
 	"vacuum": {
 		"name": "Vacuum Drones", "required_ship": "tobias",
 		"description": "Gas-harvesting drones operated by Tobias and Boschore.",
-		"ore": [
-			{"label": "COMPRESSOR", "owner_ship": "tobias", "stat": "compressor", "description": "+5% gas collection speed", "requires_ship": "tobias"},
-			{"label": "DUAL CHAMBER", "owner_ship": "tobias", "stat": "dual_chamber", "description": "+10 gas per cycle", "requires_ship": "tobias"},
-			{"label": "VACUUM COMMAND", "owner_ship": "boschore", "stat": "vacuum_command_capacity", "description": "+1 vacuum drone", "requires_ship": "boschore"},
-			{"label": "EXCITER", "owner_ship": "boschore", "stat": "exciter", "description": "+2% Tobias efficiency per vacuum drone", "requires_ship": "boschore"}
-		],
+		"ore": [],
 		"research": [
 			{"label": "Vacuum Drone Bays", "key": "tobias_vacuum_drone_bays", "description": "Deploy five fixed vacuum drones.", "requires_ship": "tobias"},
 			{"label": "Dust Bunnies", "key": "boschore_dust_bunnies", "description": "Collect 100 excess gas each Tobias cycle.", "requires_ship": "boschore"},
@@ -368,24 +359,19 @@ const COMPANIONS := {
 	},
 	"racer": {
 		"name": "Racers", "required_ship": "merlinda",
-		"description": "Racing craft running Merlinda's system courses.",
+		"description": "Racing craft launched by Merlinda to follow node-marked courses through each field.",
 		"ore": [
-			{"label": "PARTICIPANTS", "owner_ship": "merlinda", "stat": "participants", "description": "+1 racer", "requires_ship": "merlinda"},
-			{"label": "CONSOLATION", "owner_ship": "merlinda", "stat": "consolation", "description": "+25 lap income per racer", "requires_ship": "merlinda"},
-			{"label": "ENCORE", "owner_ship": "merlinda", "stat": "encore", "description": "+2% racer boost near each ship", "requires_ship": "merlinda"},
-			{"label": "TUNING", "owner_ship": "merlinda", "stat": "tuning", "description": "+5% racer speed", "requires_ship": "merlinda"}
+			{"label": "AWARENESS", "stat": "awareness", "cost": 1800, "description": "-0.08 seconds waiting at each marker"},
+			{"label": "SPEED", "stat": "speed", "cost": 4000, "description": "+5% individual racer speed (base stat 200-300)"},
+			{"label": "SWIVEL", "stat": "swivel", "cost": 2600, "description": "+10% racer turn speed"},
+			{"label": "SPONSORSHIP", "stat": "sponsorship", "cost": 2100, "description": "+25 ore per racer that finishes"}
 		],
-		"research": [
-			{"label": "Checkpoint Markers", "key": "merlinda_checkpoint_markers", "description": "Earn ore whenever racers pass a checkpoint.", "requires_ship": "merlinda"}
-		]
+		"research": []
 	},
 	"dyson": {
 		"name": "Dyson Drones", "required_ship": "stapledon",
 		"description": "Solar collectors orbiting the current system star.",
-		"ore": [
-			{"label": "DYSON CAPACITY", "owner_ship": "stapledon", "stat": "dyson_capacity", "description": "+1 Dyson drone", "requires_ship": "stapledon"},
-			{"label": "SOLAR COLLECTORS", "owner_ship": "stapledon", "stat": "solar_collectors", "description": "+5% solar income", "requires_ship": "stapledon"}
-		],
+		"ore": [],
 		"research": [
 			{"label": "Monocrystalline", "key": "stapledon_monocrystalline", "description": "Increase solar income by 20%.", "requires_ship": "stapledon"},
 			{"label": "Nanofilm", "key": "stapledon_nanofilm", "description": "Reduce solar collection time by 2%.", "requires_ship": "stapledon"}
@@ -394,12 +380,7 @@ const COMPANIONS := {
 	"trader": {
 		"name": "Trader Drones", "required_ship": "tarrip",
 		"description": "Micro-drones carrying goods and contracts between ships.",
-		"ore": [
-			{"label": "TRADER CAPACITY", "owner_ship": "tarrip", "stat": "trader_capacity", "description": "+1 trade drone", "requires_ship": "tarrip"},
-			{"label": "MICRO-TRANSITS", "owner_ship": "tarrip", "stat": "micro_transits", "description": "+5 trade cargo", "requires_ship": "tarrip"},
-			{"label": "TRADEHUB", "owner_ship": "tarrip", "stat": "tradehub", "description": "+50 trade payout", "requires_ship": "tarrip"},
-			{"label": "XENO TRADERS", "owner_ship": "elysium_air", "stat": "trader_capacity", "description": "+1 Elysium trade drone", "requires_ship": "elysium_air"}
-		],
+		"ore": [],
 		"research": [
 			{"label": "Efficient Bureaucracy", "key": "tarrip_efficient_bureaucracy", "description": "Trade drones work 25% faster.", "requires_ship": "tarrip"},
 			{"label": "Specialised Cargo", "key": "tarrip_specialised_cargo", "description": "Double trade-drone cargo.", "requires_ship": "tarrip"},
@@ -500,10 +481,26 @@ static func get_default_upgrade_levels() -> Dictionary:
 		levels[ship_id] = ship_levels
 	return levels
 
+static func get_default_companion_upgrade_levels() -> Dictionary:
+	var levels := {}
+	for companion_id in get_companion_ids():
+		var companion_levels := {}
+		for row in Array(COMPANIONS[companion_id].get("ore", [])):
+			if row.has("stat"):
+				companion_levels[str(row["stat"])] = 0
+		levels[companion_id] = companion_levels
+	return levels
+
 static func get_ore_base_cost(ship_id: String, stat_key: String) -> int:
 	for row in get_ore_rows(ship_id):
 		if str(row["stat"]) == stat_key:
 			return int(row["cost"])
+	return 0
+
+static func get_companion_ore_base_cost(companion_id: String, stat_key: String) -> int:
+	for row in Array(COMPANIONS.get(companion_id, {}).get("ore", [])):
+		if str(row.get("stat", "")) == stat_key:
+			return int(row.get("cost", 0))
 	return 0
 
 static func get_ship_count_at_rank(rank: int) -> int:
@@ -524,13 +521,6 @@ static func get_companion_data(companion_id: String) -> Dictionary:
 
 static func get_companion_display_name(companion_id: String) -> String:
 	return str(COMPANIONS.get(companion_id, {}).get("name", companion_id.capitalize()))
-
-static func is_companion_ore_stat(ship_id: String, stat_key: String) -> bool:
-	for companion_id in COMPANIONS:
-		for row in Array(COMPANIONS[companion_id].get("ore", [])):
-			if str(row.get("owner_ship", "")) == ship_id and str(row.get("stat", "")) == stat_key:
-				return true
-	return false
 
 static func is_companion_research_key(research_key: String) -> bool:
 	for companion_id in COMPANIONS:

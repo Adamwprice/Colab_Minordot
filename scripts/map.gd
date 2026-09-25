@@ -7,6 +7,8 @@ const Catalog = preload("res://scripts/ship_catalog.gd")
 @export var max_scale: float = 1.0
 
 const GRID_WORLD_STEP := 1500.0
+const MINEABLE_PULSE_SPEED := 1.8
+const RANGE_ALERT_DURATION := 2.0
 
 var pan: Vector2 = Vector2.ZERO
 var dragging: bool = false
@@ -16,6 +18,8 @@ var selected: Node = null
 var refinery_marker: Node2D = null
 var ship_markers := {}
 var held_mine_target: Node = null
+var range_alert_target: Node = null
+var range_alert_started_at: float = -1.0
 
 func _ready():
 	_build_refinery_marker()
@@ -25,6 +29,10 @@ func _ready():
 
 func _process(delta):
 	# refresh visuals each frame (cheap for prototype)
+	if range_alert_target != null:
+		var alert_expired = float(Time.get_ticks_msec()) / 1000.0 - range_alert_started_at >= RANGE_ALERT_DURATION
+		if not is_instance_valid(range_alert_target) or alert_expired:
+			range_alert_target = null
 	_update_held_mining()
 	_update_refinery_marker()
 	_update_capital_ship_markers()
@@ -73,7 +81,10 @@ func _update_refinery_marker() -> void:
 		return
 	var flagship = get_tree().get_first_node_in_group("flotilla")
 	if flagship:
-		refinery_marker.position = size * 0.5 + (flagship.position * world_scale) + pan + _get_formation_screen_offset(flagship, Vector2(-10.0, 18.0))
+		var current_scene = get_tree().get_current_scene()
+		var resource_manager = current_scene.get_node_or_null("ResourceManager") if current_scene else null
+		var refinery_position = resource_manager.get_ship_world_position("refinery") if resource_manager and resource_manager.has_method("get_ship_world_position") else flagship.position
+		refinery_marker.position = size * 0.5 + (refinery_position * world_scale) + pan
 
 func _build_capital_ship_markers() -> void:
 	for ship_key in Catalog.get_ship_ids():
@@ -188,6 +199,7 @@ func _draw():
 				draw_arc(center + pan, ring_radii[ring_offset] * world_scale, 0.0, TAU, 160, ring_color, 1.0)
 		var ast_container = cur_scene.get_node("Asteroids") if cur_scene.has_node("Asteroids") else null
 		if ast_container:
+			var pulse = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) / 1000.0 * MINEABLE_PULSE_SPEED)
 			for a in ast_container.get_children():
 				var world_pos = a.position
 				var mpos = center + (world_pos * world_scale) + pan
@@ -213,10 +225,12 @@ func _draw():
 				var harvestable = int(a.resource_amount) > 0 and unlocked_for_mining
 				var within_fleet_range = harvestable and has_range_fleet and world_pos.distance_to(fleet_world_position) <= fleet_range
 				if harvestable:
-					var harvest_glow = Color(0.35, 0.94, 0.69, 0.12) if within_fleet_range else Color(0.9, 0.46, 0.2, 0.06)
-					var harvest_outline = Color(0.45, 1.0, 0.76, 0.34) if within_fleet_range else Color(0.94, 0.64, 0.32, 0.16)
-					draw_circle(mpos, radius + 7.0, harvest_glow)
-					draw_arc(mpos, radius + 5.0, 0.0, TAU, 32, harvest_outline, 1.0)
+					var glow_alpha = lerp(0.06, 0.14, pulse) if within_fleet_range else lerp(0.025, 0.07, pulse)
+					var outline_alpha = lerp(0.22, 0.48, pulse) if within_fleet_range else lerp(0.10, 0.24, pulse)
+					var harvest_glow = Color(0.35, 0.94, 0.69, glow_alpha) if within_fleet_range else Color(0.9, 0.46, 0.2, glow_alpha)
+					var harvest_outline = Color(0.45, 1.0, 0.76, outline_alpha) if within_fleet_range else Color(0.94, 0.64, 0.32, outline_alpha)
+					draw_circle(mpos, radius + 6.0 + pulse * 2.0, harvest_glow)
+					draw_arc(mpos, radius + 4.0 + pulse * 2.0, 0.0, TAU, 32, harvest_outline, 1.0)
 				draw_circle(mpos, radius, col)
 				draw_circle(mpos - Vector2(radius * 0.3, radius * 0.25), radius * 0.25, Color(1, 0.82, 0.5, 0.55))
 				if not unlocked_for_mining:
@@ -225,6 +239,11 @@ func _draw():
 					draw_line(mpos + Vector2(-radius * 0.7, -radius * 0.7), mpos + Vector2(radius * 0.7, radius * 0.7), Color("ff526f"), 2.0)
 					draw_line(mpos + Vector2(radius * 0.7, -radius * 0.7), mpos + Vector2(-radius * 0.7, radius * 0.7), Color("ff526f"), 2.0)
 				draw_string(ThemeDB.fallback_font, mpos + Vector2(-28, -radius - 8), "%d" % int(a.resource_amount), HORIZONTAL_ALIGNMENT_CENTER, 50, 12, Color("d9f4ff"))
+				if a == range_alert_target:
+					var alert_elapsed = float(Time.get_ticks_msec()) / 1000.0 - range_alert_started_at
+					if alert_elapsed < RANGE_ALERT_DURATION:
+						var alert_alpha = 1.0 - smoothstep(RANGE_ALERT_DURATION * 0.65, RANGE_ALERT_DURATION, alert_elapsed)
+						draw_string(ThemeDB.fallback_font, mpos + Vector2(-100.0, -radius - 30.0), "OUT OF RANGE - FLEET APPROACHING", HORIZONTAL_ALIGNMENT_CENTER, 200.0, 12, Color(1.0, 0.68, 0.3, alert_alpha))
 				if a == selected:
 					draw_arc(mpos, radius + 7, 0, TAU, 32, Color("5ee7ff"), 2.0)
 		# draw flotilla
@@ -254,7 +273,8 @@ func _draw():
 				var visual_color: Color = visual.get("color", Color.WHITE)
 				draw_circle(visual_pos, visual_radius + 2.0, Color(visual_color, 0.12))
 				draw_circle(visual_pos, visual_radius, visual_color)
-				var velocity_hint = Vector2.RIGHT.rotated(ship_animation_hint(str(visual.get("kind", "")), float(Time.get_ticks_msec()) / 1000.0))
+				var velocity_hint: Vector2 = visual.get("direction", Vector2.RIGHT.rotated(ship_animation_hint(str(visual.get("kind", "")), float(Time.get_ticks_msec()) / 1000.0)))
+				velocity_hint = velocity_hint.normalized()
 				draw_line(visual_pos - velocity_hint * (visual_radius + 3.0), visual_pos, visual_color.lightened(0.35), 1.0)
 
 func _gui_input(event):
@@ -264,6 +284,7 @@ func _gui_input(event):
 			if event.pressed:
 				selected = _pick_entity(event.position)
 				held_mine_target = selected if selected and selected.is_in_group("asteroids") and not selected.is_in_group("sun") else null
+				_update_range_alert_for_target(held_mine_target)
 				_mine_held_target(false)
 				_update_selection_label()
 			else:
@@ -285,6 +306,20 @@ func _gui_input(event):
 		# Middle-drag pans; right-click is reserved for flagship movement orders.
 		if Input.is_mouse_button_pressed(3): # MIDDLE
 			pan += event.relative
+
+func _update_range_alert_for_target(target: Node) -> void:
+	if target == null or not is_instance_valid(target):
+		return
+	var current_scene = get_tree().get_current_scene()
+	var resource_manager = current_scene.get_node_or_null("ResourceManager") if current_scene else null
+	if resource_manager == null or not resource_manager.has_method("is_asteroid_in_mining_range"):
+		return
+	var mineable = not resource_manager.has_method("can_mine_resource_node") or bool(resource_manager.can_mine_resource_node(target))
+	if mineable and not bool(resource_manager.is_asteroid_in_mining_range(target)):
+		range_alert_target = target
+		range_alert_started_at = float(Time.get_ticks_msec()) / 1000.0
+	elif target == range_alert_target:
+		range_alert_target = null
 
 func _update_held_mining() -> void:
 	if held_mine_target == null:
