@@ -1,8 +1,6 @@
-res://scripts/ui.gd
-res://scripts/game_state.gd
-res://scripts/map.gd
 res://scripts/resource_manager.gd
 res://scripts/ship_catalog.gd
-res://scripts/battle.gd
 res://scenes/Main.tscn
-res://scenes/_upgrade_audit.gd
+res://tests/mining_ships_test.gd
+res://scripts/game_state.gd
+res://scripts/ui.gd

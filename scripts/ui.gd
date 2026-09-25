@@ -36,7 +36,6 @@ var flagship_speed_text: Label = null
 var flagship_speed_button: Button = null
 var command_capacity_text: Label = null
 var command_capacity_button: Button = null
-var battle_button: Button = null
 var controls_toggle_button: Button = null
 var controls_label: Label = null
 var dev_panel: Panel = null
@@ -327,6 +326,8 @@ const RESEARCH_ROW_DISPLAY := [
 func _ready():
 	var cur_scene = get_tree().get_current_scene()
 	resource_manager = cur_scene.get_node("ResourceManager") if cur_scene.has_node("ResourceManager") else null
+	if resource_manager:
+		resource_manager.upgrade_notice.connect(_show_action)
 
 	# Compact command overlay
 	resource_label = Label.new()
@@ -392,13 +393,6 @@ func _ready():
 	add_child(btn_center)
 	btn_center.pressed.connect(Callable(self, "_on_center_pressed"))
 
-	battle_button = Button.new()
-	battle_button.name = "BattleButton"
-	battle_button.text = "Enter Battle"
-	battle_button.position = Vector2(btn_x, btn_y + 108)
-	battle_button.size = Vector2(280, 26)
-	add_child(battle_button)
-	battle_button.pressed.connect(Callable(self, "_on_battle_pressed"))
 
 	var btn_new_field = Button.new()
 	btn_new_field.name = "NewFieldButton"
@@ -939,7 +933,7 @@ func _build_research_category_tabs() -> void:
 		var tab_index = research_category_buttons.size()
 		var button = Button.new()
 		button.name = "%sResearchCategoryTab" % str(tab_key).to_pascal_case()
-		button.text = str(UPGRADE_TAB_TITLES[tab_key]).capitalize()
+		button.text = "%d %s" % [tab_index + 1, str(UPGRADE_TAB_TITLES[tab_key]).capitalize()]
 		button.toggle_mode = true
 		button.position = Vector2(20.0 + float(tab_index) * 220.0, 60.0)
 		button.size = Vector2(212.0, 32.0)
@@ -1378,8 +1372,7 @@ func _layout_hud() -> void:
 		"CenterButton": [control_x, control_y + 36.0, control_width, 26.0],
 		"LockFocusButton": [control_x, control_y + 72.0, control_width, 26.0],
 		"SplitFocusButton": [control_x, control_y + 108.0, control_width, 26.0],
-		"BattleButton": [control_x, control_y + 144.0, control_width, 26.0],
-		"NewFieldButton": [control_x, control_y + 180.0, control_width, 26.0]
+		"NewFieldButton": [control_x, control_y + 144.0, control_width, 26.0]
 	}
 	for control_name in controls:
 		var control = get_node_or_null(control_name) as Control
@@ -1708,13 +1701,6 @@ func _process(_delta):
 			stage_label.text = "PRESTIGE %d | NEXT FIELD IN %02d" % [stage_prestige_level, int(ceil(resource_manager.next_stage_timer))]
 		else:
 			stage_label.text = "PRESTIGE %d | FIELD %d" % [stage_prestige_level, int(resource_manager.asteroid_field_level + 1)]
-	if battle_button:
-		if resource_manager and resource_manager.can_enter_battle():
-			battle_button.disabled = false
-			battle_button.text = "Enter Battle"
-		else:
-			battle_button.disabled = true
-			battle_button.text = "Battle Lv 10+"
 	if upgrade_label and resource_manager:
 		var speed_level = int(resource_manager.speed_level)
 		var mining_level = int(resource_manager.mining_level)
@@ -1893,7 +1879,7 @@ func _update_research_panel_values() -> void:
 				else:
 					card_battle_button.disabled = not game_state.can_battle_research_card(upgrade_key)
 					card_battle_button.text = "Completed" if committed_passive_level > 0 else "Battle"
-					card_battle_button.tooltip_text = "Active until the next prestige." if committed_passive_level > 0 else "Battle strength: %.2fx\nVictory applies this research." % next_multiplier
+					card_battle_button.tooltip_text = "Permanent: survives prestige." if committed_passive_level > 0 else "Battle strength: %.2fx\nVictory applies this research." % next_multiplier
 	for ship_key in research_ship_lock_labels:
 		for lock_label in Array(research_ship_lock_labels[ship_key]):
 			if lock_label:
@@ -1962,6 +1948,15 @@ func _update_ship_upgrade_huds() -> void:
 				row["button"].disabled = not replacing_drone and level >= cap
 				var purchase_text = "Replace lost drone: %d ore" % cost if replacing_drone else ("MAX" if level >= cap else "Cost: %d ore" % cost)
 				row["button"].tooltip_text = "%s\n%s\nLevel: %d / %d\n%s" % [str(row["config"]["label"]), str(row["config"]["description"]), level, cap, purchase_text]
+				if not is_companion:
+					var effective = float(resource_manager.get_effective_ship_levels(owner_ship).get(stat_key, level))
+					row["button"].tooltip_text += "\nEffective level: %.3f (includes overflow)" % effective
+					var warning = resource_manager.get_ship_upgrade_warning(owner_ship, stat_key)
+					if not warning.is_empty():
+						row["effect"].text = "CAP / OVERFLOW"
+						row["button"].tooltip_text += "\n" + warning
+					if not replacing_drone and resource_manager.get_ship_upgrade_gains(owner_ship, stat_key).is_empty():
+						row["button"].disabled = true
 
 func _get_companion_income_source(companion_id: String) -> String:
 	match companion_id:
@@ -2185,7 +2180,7 @@ func _set_mining_hud_visibility(visible: bool) -> void:
 		_layout_hud()
 
 func _set_control_buttons_visibility(visible: bool) -> void:
-	for node_name in ["CenterButton", "LockFocusButton", "SplitFocusButton", "BattleButton", "NewFieldButton"]:
+	for node_name in ["CenterButton", "LockFocusButton", "SplitFocusButton", "NewFieldButton"]:
 		var node = get_node_or_null(node_name) as Control
 		if node:
 			var requires_manual_control = node_name in ["LockFocusButton", "SplitFocusButton"]
@@ -2237,7 +2232,7 @@ func _perform_prestige(force_prestige: bool) -> void:
 		if resource_manager.purchase_prestige(force_prestige):
 			var game_state = get_node_or_null("/root/GameState")
 			var prestige = int(game_state.prestige_level) if game_state else 0
-			_show_action("Prestige %d: ore upgrades and research cleared" % prestige)
+			_show_action("Prestige %d: ore upgrades and upgrade caps reset; one-time research retained" % prestige)
 			_set_prestige_visibility(false)
 			_set_research_visibility(false)
 			_layout_hud()
@@ -2363,7 +2358,7 @@ func _build_ore_upgrade_tabs() -> void:
 	for tab_key in UPGRADE_TAB_ORDER:
 		var button = Button.new()
 		button.name = "%sOreUpgradeTab" % str(tab_key).to_pascal_case()
-		button.text = str(UPGRADE_TAB_TITLES[tab_key]).capitalize()
+		button.text = "%d %s" % [UPGRADE_TAB_ORDER.find(tab_key) + 1, str(UPGRADE_TAB_TITLES[tab_key]).capitalize()]
 		button.toggle_mode = true
 		button.tooltip_text = str(UPGRADE_TAB_DESCRIPTIONS.get(tab_key, "Show %s ore upgrades." % str(UPGRADE_TAB_TITLES[tab_key]).to_lower()))
 		button.add_theme_font_size_override("font_size", 11)
@@ -2386,6 +2381,22 @@ func _on_ore_upgrade_tab_pressed(tab_key: String) -> void:
 	selected_ore_upgrade_tab = tab_key
 	_layout_hud()
 	_set_mining_hud_visibility(not _has_open_research_overlay())
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event is InputEventKey or not event.pressed or event.echo:
+		return
+	if event.ctrl_pressed or event.alt_pressed or event.meta_pressed:
+		return
+	var focus = get_viewport().gui_get_focus_owner()
+	if focus is LineEdit or focus is TextEdit:
+		return
+	var index = int(event.keycode) - KEY_1
+	if index >= 0 and index < UPGRADE_TAB_ORDER.size():
+		if research_visible:
+			_on_research_category_tab_pressed(UPGRADE_TAB_ORDER[index])
+		else:
+			_on_ore_upgrade_tab_pressed(UPGRADE_TAB_ORDER[index])
+		get_viewport().set_input_as_handled()
 
 func _build_ore_upgrade_scroll() -> void:
 	ore_upgrade_scroll = ScrollContainer.new()
@@ -2528,6 +2539,7 @@ func _on_companion_upgrade_toggle(ship_key: String) -> void:
 	_layout_hud()
 
 func _on_upgrade_ship_stat(ship_key: String, stat_key: String) -> void:
+	var warning = resource_manager.get_ship_upgrade_warning(ship_key, stat_key) if resource_manager else ""
 	if resource_manager and resource_manager.upgrade_ship_stat(ship_key, stat_key):
 		var display_name = ship_key.capitalize()
 		var game_state = get_node_or_null("/root/GameState")
@@ -2535,7 +2547,7 @@ func _on_upgrade_ship_stat(ship_key: String, stat_key: String) -> void:
 			var profile = game_state.get_ship_profile(StringName(ship_key)) as ShipProfile
 			if profile:
 				display_name = profile.display_name
-		_show_action("%s %s upgraded" % [display_name, stat_key.capitalize()])
+		_show_action(warning if not warning.is_empty() else "%s %s upgraded" % [display_name, stat_key.capitalize()])
 	else:
 		_show_action("Upgrade unavailable")
 

@@ -1,6 +1,8 @@
 extends Node
 
 const Catalog = preload("res://scripts/ship_catalog.gd")
+const Overflow = preload("res://scripts/ship_upgrade_overflow.gd")
+signal upgrade_notice(message: String)
 
 signal resource_changed
 signal upgrades_changed
@@ -37,8 +39,6 @@ var manual_fleet_order_active: bool = false
 var income_events: Array[Dictionary] = []
 var ship_operation_positions := {}
 var ship_operation_targets := {}
-var ship_operation_cargo := {}
-var ship_operation_returning := {}
 var ship_animation_time: float = 0.0
 var nelson_track_timer: float = 0.0
 var elysium_visit_timer: float = 0.0
@@ -76,7 +76,7 @@ const BASE_CAPACITY := 10
 const BASE_DRONE_CAP := 0
 const BASE_CLICK_OUTPUT := 1
 const BASE_CLICK_RATE_CAP := 10
-const BASE_HOLD_CLICK_RATE := 2
+const BASE_HOLD_CLICK_RATE := 5
 const BASE_FLAGSHIP_SPEED := 200.0
 const CLICK_OUTPUT_PER_LEVEL := 1
 const CLICK_RATE_CAP_PER_LEVEL := 1
@@ -221,6 +221,7 @@ func apply_run_state(state: Dictionary, active_drone_override: int = -1) -> void
 	var saved_ship_upgrades: Dictionary = state.get("ship_upgrades", {})
 	for ship_key in ship_upgrade_levels:
 		var saved_levels: Dictionary = saved_ship_upgrades.get(ship_key, {})
+		saved_levels = _migrate_mining_ship_upgrades(ship_key, saved_levels)
 		for stat_key in ship_upgrade_levels[ship_key]:
 			ship_upgrade_levels[ship_key][stat_key] = max(0, int(saved_levels.get(stat_key, ship_upgrade_levels[ship_key][stat_key])))
 	var saved_companion_upgrades: Dictionary = state.get("companion_upgrades", {})
@@ -294,8 +295,6 @@ func reset_run_for_prestige(surviving_drones: int = 0, update_game_state: bool =
 	ship_income_timers.clear()
 	ship_operation_positions.clear()
 	ship_operation_targets.clear()
-	ship_operation_cargo.clear()
-	ship_operation_returning.clear()
 	ship_animation_time = 0.0
 	nelson_track_timer = 0.0
 	elysium_visit_timer = 0.0
@@ -606,7 +605,7 @@ func _process_merlinda_race(delta: float) -> void:
 		merlinda_race_cooldown = MERLINDA_RACE_WAIT
 
 func _sync_merlinda_racers() -> void:
-	var desired_count = max(0, get_ship_upgrade_level("merlinda", "participants"))
+	var desired_count = max(0, get_effective_ship_upgrade_level("merlinda", "participants"))
 	var home = get_ship_world_position("merlinda")
 	while racer_states.size() < desired_count:
 		var index = racer_states.size()
@@ -719,24 +718,24 @@ func _grant_merlinda_checkpoint_reward() -> void:
 		add_resources(MERLINDA_CHECKPOINT_REWARD * get_ship_ore_multiplier("merlinda"), "merlinda")
 
 func _grant_merlinda_racer_finish_reward() -> void:
-	var reward = float(get_ship_upgrade_level("merlinda", "consolation")) * 25.0
+	var reward = float(get_effective_ship_upgrade_level("merlinda", "consolation")) * 25.0
 	reward += float(get_companion_upgrade_level("racer", "sponsorship")) * 25.0
 	if reward > 0.0:
 		add_resources(reward * get_ship_ore_multiplier("merlinda"), "merlinda")
 
 func _grant_merlinda_race_completion_reward() -> void:
-	var reward = float(get_ship_upgrade_level("merlinda", "celebrations")) * 500.0
+	var reward = float(get_effective_ship_upgrade_level("merlinda", "celebrations")) * 500.0
 	if reward > 0.0:
 		add_resources(reward * get_ship_ore_multiplier("merlinda"), "merlinda")
 
 func get_racer_drone_speed(base_speed_stat: float = 250.0) -> float:
 	var shared_drone_multiplier = get_speed() / BASE_SPEED
 	var speed = clamp(base_speed_stat, MERLINDA_RACER_MIN_SPEED, MERLINDA_RACER_MAX_SPEED) * MERLINDA_RACER_SPEED_SCALE * shared_drone_multiplier
-	speed *= 1.0 + float(get_ship_upgrade_level("merlinda", "tuning")) * 0.05
+	speed *= 1.0 + float(get_effective_ship_upgrade_level("merlinda", "tuning")) * 0.05
 	speed *= 1.0 + float(get_companion_upgrade_level("racer", "speed")) * 0.05
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state:
-		speed *= 1.0 + float(get_ship_upgrade_level("merlinda", "encore") * Catalog.get_ship_count_at_rank(int(game_state.prestige_level))) * 0.02
+		speed *= 1.0 + float(get_effective_ship_upgrade_level("merlinda", "encore") * Catalog.get_ship_count_at_rank(int(game_state.prestige_level))) * 0.02
 	return speed
 
 func get_racer_marker_wait_time() -> float:
@@ -772,19 +771,7 @@ func _process_ship_operations(delta: float) -> void:
 			if target == null or not is_instance_valid(target) or not _is_valid_mining_target(target) or not resource_types.has(str(target.get_meta("resource_type", ""))):
 				target = _get_nearest_resource_by_types(resource_types, ship_key)
 				ship_operation_targets[ship_key] = target
-			var carrying = float(ship_operation_cargo.get(ship_key, 0.0))
-			var returning = bool(ship_operation_returning.get(ship_key, false))
-			if target == null and carrying > 0.0:
-				returning = true
-				ship_operation_returning[ship_key] = true
-			if returning:
-				desired_position = formation_position
-				if Vector2(ship_operation_positions[ship_key]).distance_to(formation_position) <= 24.0:
-					if carrying > 0.0:
-						add_resources(carrying, ship_key)
-					ship_operation_cargo[ship_key] = 0.0
-					ship_operation_returning[ship_key] = false
-			elif target != null:
+			if target != null:
 				var approach_direction = (flotilla.position - target.position).normalized()
 				if approach_direction.length_squared() < 0.001:
 					approach_direction = Vector2.LEFT
@@ -809,9 +796,9 @@ func _get_ship_formation_position(ship_key: String) -> Vector2:
 	return flagship_position + formation_offset
 
 func _get_operational_ship_speed(ship_key: String) -> float:
-	var speed = BASE_FLAGSHIP_SPEED + float(get_ship_upgrade_level(ship_key, "speed")) * 10.0
-	speed += float(get_ship_upgrade_level("gethica", "local_sfc"))
-	speed += float(get_ship_upgrade_level("parallax", "coordinator")) * 2.0
+	var speed = BASE_FLAGSHIP_SPEED + float(get_effective_ship_upgrade_level(ship_key, "speed")) * 10.0
+	speed += float(get_effective_ship_upgrade_level("gethica", "local_sfc"))
+	speed += float(get_effective_ship_upgrade_level("parallax", "coordinator")) * 2.0
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state:
 		if ship_key == "minotard" and int(game_state.get_passive_level("minotard_ion_thrusters")) > 0:
@@ -830,28 +817,18 @@ func _get_ship_work_range(ship_key: String) -> float:
 		"atlas":
 			return 2000.0
 		"tobias":
-			return 300.0 + float(get_ship_upgrade_level("tobias", "elongation")) * 100.0 + float(get_ship_upgrade_level("boschore", "extension")) * 250.0
+			return 300.0 + float(get_effective_ship_upgrade_level("tobias", "elongation")) * 100.0 + float(get_effective_ship_upgrade_level("boschore", "extension")) * 250.0
 		"fruegal":
-			return 300.0 + float(get_ship_upgrade_level("fruegal", "funneling")) * 100.0
+			return 300.0 + float(get_effective_ship_upgrade_level("fruegal", "funneling")) * 100.0
 	return 300.0
-
-func _get_ship_cargo_capacity(ship_key: String) -> float:
-	match ship_key:
-		"minotard":
-			return 100.0 + float(get_ship_upgrade_level(ship_key, "cargo_capacity")) * 50.0
-		"tobias":
-			return 250.0
-		"fruegal":
-			return 300.0
-	return 100.0
 
 func _process_catalog_research_income(delta: float) -> void:
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state == null:
 		return
-	if game_state.is_ship_unlocked("nelson") and int(game_state.get_passive_level("nelson_channels")) > 0 and get_ship_upgrade_level("nelson", "local_fm") > 0:
+	if game_state.is_ship_unlocked("nelson") and int(game_state.get_passive_level("nelson_channels")) > 0 and get_effective_ship_upgrade_level("nelson", "local_fm") > 0:
 		nelson_track_timer += delta
-		var channel_interval = max(30.0, 120.0 - float(get_ship_upgrade_level("nelson", "local_fm")) * 5.0)
+		var channel_interval = max(30.0, 120.0 - float(get_effective_ship_upgrade_level("nelson", "local_fm")) * 5.0)
 		while nelson_track_timer >= channel_interval:
 			nelson_track_timer -= channel_interval
 			add_resources(2000.0 * get_ship_ore_multiplier("nelson"), "nelson")
@@ -863,10 +840,10 @@ func _process_catalog_research_income(delta: float) -> void:
 		elysium_visit_timer = 0.0
 
 func _get_elysium_visit_interval() -> float:
-	return max(60.0, 300.0 - float(get_ship_upgrade_level("elysium_air", "invitation")) * 2.0)
+	return max(60.0, 300.0 - float(get_effective_ship_upgrade_level("elysium_air", "invitation")) * 2.0)
 
 func is_elysium_visitor_active() -> bool:
-	var duration = 10.0 * (1.0 + float(get_ship_upgrade_level("elysium_air", "invitation")) * 0.01)
+	var duration = 10.0 * (1.0 + float(get_effective_ship_upgrade_level("elysium_air", "invitation")) * 0.01)
 	return elysium_visit_timer < duration
 
 func _process_mining_ship(ship_key: String, delta: float, resource_types: Array, max_targets: int) -> void:
@@ -878,31 +855,29 @@ func _process_mining_ship(ship_key: String, delta: float, resource_types: Array,
 	var interval = 1.0
 	match ship_key:
 		"minotard":
-			amount = get_ship_upgrade_level(ship_key, "mining_array") * 10
-			interval = 1.0 / max(0.1, 1.0 + float(get_ship_upgrade_level(ship_key, "optimized_mining")) * 0.05)
+			amount = 10 + get_effective_ship_upgrade_level(ship_key, "mining_array") * 10
+			interval = 1.0 / max(0.1, 1.0 + float(get_effective_ship_upgrade_level(ship_key, "optimized_mining")) * 0.05)
 			if int(game_state.get_passive_level("minotard_bifocal_lens")) > 0:
 				interval /= 1.05
 		"tobias":
-			amount = 10 + get_ship_upgrade_level(ship_key, "dual_chamber") * 10
-			var vacuum_count = (5 if int(game_state.get_passive_level("tobias_vacuum_drone_bays")) > 0 else 0) + get_ship_upgrade_level("boschore", "vacuum_command_capacity")
+			amount = 10 + get_effective_ship_upgrade_level(ship_key, "dual_chamber") * 10
+			var vacuum_count = (5 if int(game_state.get_passive_level("tobias_vacuum_drone_bays")) > 0 else 0) + get_effective_ship_upgrade_level("boschore", "vacuum_command_capacity")
 			amount += vacuum_count * 2
-			interval = 1.0 / max(0.1, 1.0 + float(get_ship_upgrade_level(ship_key, "compressor")) * 0.05)
+			interval = 1.0 / max(0.1, 1.0 + float(get_effective_ship_upgrade_level(ship_key, "compressor")) * 0.05)
 			if vacuum_count > 0:
 				interval /= get_drone_reconfiguration_multiplier()
 			if int(game_state.get_passive_level("boschore_nozzle_selection")) > 0:
 				interval /= 3.0
 		"fruegal":
-			amount = 5 + get_ship_upgrade_level(ship_key, "micron_laser") * 5
-			interval = 1.0 / max(0.1, 1.0 + float(get_ship_upgrade_level(ship_key, "diamond_tip")) * 0.05)
+			amount = 5 + get_effective_ship_upgrade_level(ship_key, "micron_laser") * 5
+			interval = 1.0 / max(0.1, 1.0 + float(get_effective_ship_upgrade_level(ship_key, "diamond_tip")) * 0.05)
 	if amount <= 0:
-		return
-	if bool(ship_operation_returning.get(ship_key, false)):
 		return
 	var active_target = ship_operation_targets.get(ship_key)
 	if active_target == null or not is_instance_valid(active_target) or not _is_valid_mining_target(active_target):
 		return
 	if ship_key == "fruegal" and str(active_target.get_meta("resource_type", "")) in ["gas_planet", "gas_cloud"]:
-		var vacuum_count = get_ship_upgrade_level(ship_key, "vacuum_command_capacity")
+		var vacuum_count = get_effective_ship_upgrade_level(ship_key, "vacuum_command_capacity")
 		amount += vacuum_count * 2
 		if vacuum_count > 0:
 			interval /= get_drone_reconfiguration_multiplier()
@@ -910,9 +885,12 @@ func _process_mining_ship(ship_key: String, delta: float, resource_types: Array,
 		return
 	if ship_key == "fruegal":
 		var nearby_nodes = _count_resources_in_range(get_ship_world_position(ship_key), _get_ship_work_range(ship_key), resource_types)
-		interval /= 1.0 + float(max(0, nearby_nodes - 1) * get_ship_upgrade_level(ship_key, "adjacentor")) * 0.02
+		interval /= 1.0 + float(max(0, nearby_nodes - 1) * get_effective_ship_upgrade_level(ship_key, "adjacentor")) * 0.02
 	ship_income_timers[ship_key] = float(ship_income_timers.get(ship_key, 0.0)) + delta
 	while float(ship_income_timers[ship_key]) >= interval:
+		if not _is_valid_mining_target(active_target):
+			ship_income_timers[ship_key] = 0.0
+			break
 		ship_income_timers[ship_key] = float(ship_income_timers[ship_key]) - interval
 		var cycle_targets: Array[Node] = []
 		for target_index in range(max_targets):
@@ -922,27 +900,18 @@ func _process_mining_ship(ship_key: String, delta: float, resource_types: Array,
 			cycle_targets.append(target)
 			if get_ship_world_position(ship_key).distance_to(target.position) > _get_ship_work_range(ship_key):
 				break
-			var cargo_capacity = _get_ship_cargo_capacity(ship_key)
-			var cargo = float(ship_operation_cargo.get(ship_key, 0.0))
-			var available_space = max(0, int(floor(cargo_capacity - cargo)))
-			if available_space <= 0:
-				ship_operation_returning[ship_key] = true
-				break
-			var harvested = int(target.mine(min(amount, available_space)))
+			var harvested = int(target.mine(amount))
 			if harvested <= 0:
 				continue
 			var gained = float(harvested) * get_ship_ore_multiplier(ship_key)
 			if ship_key == "minotard" and int(game_state.get_passive_level("minotard_optical_lens")) > 0:
 				gained *= 1.1
 			if ship_key == "tobias":
-				var active_vacuum_count = (5 if int(game_state.get_passive_level("tobias_vacuum_drone_bays")) > 0 else 0) + get_ship_upgrade_level("boschore", "vacuum_command_capacity")
-				gained *= 1.0 + float(active_vacuum_count * get_ship_upgrade_level("boschore", "exciter")) * 0.02
+				var active_vacuum_count = (5 if int(game_state.get_passive_level("tobias_vacuum_drone_bays")) > 0 else 0) + get_effective_ship_upgrade_level("boschore", "vacuum_command_capacity")
+				gained *= 1.0 + float(active_vacuum_count * get_effective_ship_upgrade_level("boschore", "exciter")) * 0.02
 				if int(game_state.get_passive_level("boschore_dust_bunnies")) > 0:
 					gained += 100.0
-			ship_operation_cargo[ship_key] = float(ship_operation_cargo.get(ship_key, 0.0)) + gained
-			if float(ship_operation_cargo[ship_key]) >= cargo_capacity or int(target.resource_amount) <= 0:
-				ship_operation_returning[ship_key] = true
-				break
+			add_resources(gained, ship_key)
 
 func _get_nearest_resource_by_types(resource_types: Array, ship_key: String = "flagship", excluded_targets: Array[Node] = []) -> Node:
 	var parent = get_parent()
@@ -980,7 +949,7 @@ func _get_catalog_income_interval(ship_key: String) -> float:
 		"merlinda":
 			return MERLINDA_RACE_WAIT
 		"stapledon":
-			var interval = max(2.0, 20.0 - float(get_ship_upgrade_level(ship_key, "flare_catcher")))
+			var interval = max(2.0, 20.0 - float(get_effective_ship_upgrade_level(ship_key, "flare_catcher")))
 			if game_state and int(game_state.get_passive_level("stapledon_nanofilm")) > 0:
 				interval *= 0.98
 			return interval / get_drone_reconfiguration_multiplier()
@@ -988,7 +957,7 @@ func _get_catalog_income_interval(ship_key: String) -> float:
 			var interval = 7.5 if game_state and int(game_state.get_passive_level("tarrip_efficient_bureaucracy")) > 0 else 10.0
 			return interval / get_drone_reconfiguration_multiplier()
 		"elysium_air":
-			var interval = max(30.0, 300.0 - float(get_ship_upgrade_level(ship_key, "invitation")) * 2.0)
+			var interval = max(30.0, 300.0 - float(get_effective_ship_upgrade_level(ship_key, "invitation")) * 2.0)
 			if game_state and int(game_state.get_passive_level("elysium_xeno_trade")) > 0:
 				interval /= 1.25
 			if game_state and int(game_state.get_passive_level("elysium_visitors")) > 0 and is_elysium_visitor_active():
@@ -1001,27 +970,27 @@ func _get_catalog_income_amount(ship_key: String) -> float:
 	var ship_count = Catalog.get_ship_count_at_rank(int(game_state.prestige_level)) if game_state else 1
 	match ship_key:
 		"nelson":
-			return float(get_ship_upgrade_level(ship_key, "local_comms")) * 0.75 + float(get_ship_upgrade_level(ship_key, "commissions") * ship_count)
+			return float(get_effective_ship_upgrade_level(ship_key, "local_comms")) * 0.75 + float(get_effective_ship_upgrade_level(ship_key, "commissions") * ship_count)
 		"merlinda":
-			var participants = get_ship_upgrade_level(ship_key, "participants")
-			var income = float(participants * get_ship_upgrade_level(ship_key, "consolation") * 25)
-			income += float(get_ship_upgrade_level(ship_key, "celebrations")) * 500.0
+			var participants = get_effective_ship_upgrade_level(ship_key, "participants")
+			var income = float(participants * get_effective_ship_upgrade_level(ship_key, "consolation") * 25)
+			income += float(get_effective_ship_upgrade_level(ship_key, "celebrations")) * 500.0
 			return income
 		"stapledon":
-			var income = float(get_ship_upgrade_level(ship_key, "dyson_capacity")) * 25.0
-			income *= 1.0 + float(get_ship_upgrade_level(ship_key, "solar_collectors")) * 0.05
+			var income = float(get_effective_ship_upgrade_level(ship_key, "dyson_capacity")) * 25.0
+			income *= 1.0 + float(get_effective_ship_upgrade_level(ship_key, "solar_collectors")) * 0.05
 			if game_state and int(game_state.get_passive_level("stapledon_monocrystalline")) > 0:
 				income *= 1.2
 			return income
 		"tarrip":
-			var traders = get_ship_upgrade_level(ship_key, "trader_capacity")
-			var cargo = 50.0 + float(get_ship_upgrade_level(ship_key, "micro_transits")) * 5.0
+			var traders = get_effective_ship_upgrade_level(ship_key, "trader_capacity")
+			var cargo = 50.0 + float(get_effective_ship_upgrade_level(ship_key, "micro_transits")) * 5.0
 			if game_state and int(game_state.get_passive_level("tarrip_specialised_cargo")) > 0:
 				cargo *= 2.0
-			return float(traders) * (cargo + float(get_ship_upgrade_level(ship_key, "tradehub")) * 50.0) + float(get_ship_upgrade_level(ship_key, "highstreet_traffic") * ship_count * 100)
+			return float(traders) * (cargo + float(get_effective_ship_upgrade_level(ship_key, "tradehub")) * 50.0) + float(get_effective_ship_upgrade_level(ship_key, "highstreet_traffic") * ship_count * 100)
 		"elysium_air":
-			var income = float(get_ship_upgrade_level(ship_key, "trader_capacity")) * 100.0
-			income *= 1.0 + float(get_ship_upgrade_level(ship_key, "exhibits")) * 0.25
+			var income = float(get_effective_ship_upgrade_level(ship_key, "trader_capacity")) * 100.0
+			income *= 1.0 + float(get_effective_ship_upgrade_level(ship_key, "exhibits")) * 0.25
 			return income
 	return 0.0
 
@@ -1100,6 +1069,8 @@ func _buy_cheapest_ore_upgrade() -> bool:
 			for stat_key in ship_upgrade_levels[ship_key]:
 				var ship_level = get_ship_upgrade_level(ship_key, stat_key)
 				var replacing_drone = stat_key == _get_ship_mining_drone_stat(ship_key) and not str(stat_key).is_empty() and has_missing_owned_drones(ship_key)
+				if not replacing_drone and get_ship_upgrade_gains(ship_key, stat_key).is_empty():
+					continue
 				if replacing_drone or ship_level < get_ship_upgrade_cap(ship_key, stat_key):
 					candidates.append({
 						"kind": "ship",
@@ -1250,7 +1221,7 @@ func get_fleet_start_position() -> Vector2:
 	return FLEET_START_POSITION
 
 func get_fleet_mining_range() -> float:
-	return FLEET_MINING_RANGE + float(get_ship_upgrade_level("gethica", "fleet_adjuster")) * 100.0
+	return FLEET_MINING_RANGE + float(get_effective_ship_upgrade_level("gethica", "fleet_adjuster")) * 100.0
 
 func get_system_ring_index(world_position: Vector2) -> int:
 	var closest_ring = 1
@@ -1343,12 +1314,12 @@ func _distribute_field_resources(container: Node) -> void:
 
 func get_field_resource_cap(normal_node_count: int = 1) -> int:
 	var resource_cap = FIELD_RESOURCE_CAP
-	resource_cap += get_ship_upgrade_level("gethica", "spectrometer_alpha") * GETHICA_SCANNER_RESOURCES * max(0, normal_node_count)
+	resource_cap += get_effective_ship_upgrade_level("gethica", "spectrometer_alpha") * GETHICA_SCANNER_RESOURCES * max(0, normal_node_count)
 	return resource_cap
 
 func get_field_extra_node_count() -> int:
 	var game_state = get_node_or_null("/root/GameState")
-	var extra_nodes = get_ship_upgrade_level("parallax", "matilda_array")
+	var extra_nodes = get_effective_ship_upgrade_level("parallax", "matilda_array")
 	if game_state and int(game_state.get_passive_level("gethica_deep_space_arrays")) > 0:
 		extra_nodes += 3
 	return extra_nodes
@@ -1473,9 +1444,9 @@ func get_owned_drone_count(source_ship: String = "") -> int:
 func _get_ship_mining_drone_capacity(ship_key: String) -> int:
 	match ship_key:
 		"kradle", "drone_carrier":
-			return get_ship_upgrade_level(ship_key, "command_capacity")
+			return get_effective_ship_upgrade_level(ship_key, "command_capacity")
 		"fruegal":
-			return get_ship_upgrade_level(ship_key, "drone_command_capacity")
+			return get_effective_ship_upgrade_level(ship_key, "drone_command_capacity")
 	return 0
 
 func has_missing_owned_drones(source_ship: String = "") -> bool:
@@ -1489,7 +1460,7 @@ func get_drone_purchase_cost() -> int:
 	return get_ore_upgrade_cost("drones", drone_level)
 
 func get_click_output() -> int:
-	var shared_output = get_ship_upgrade_level("kradle", "output") + get_ship_upgrade_level("drone_carrier", "output")
+	var shared_output = get_effective_ship_upgrade_level("kradle", "output") + get_effective_ship_upgrade_level("drone_carrier", "output")
 	var base_output = float(BASE_CLICK_OUTPUT + (click_output_level + shared_output) * CLICK_OUTPUT_PER_LEVEL)
 	return max(0, int(round(resolve_ship_stat(&"flagship", ShipProfile.STAT_MINING_CLICK_OUTPUT, base_output))))
 
@@ -1501,38 +1472,38 @@ func get_battle_click_damage() -> int:
 	return max(0, int(round(resolve_ship_stat(&"flagship", ShipProfile.STAT_BATTLE_CLICK_DAMAGE, float(damage)))))
 
 func get_starburst_strike_damage() -> int:
-	var damage = max(1, get_ship_upgrade_level("starburst", "salvo"))
-	damage = int(ceil(float(damage) * (1.0 + float(get_ship_upgrade_level("starburst", "targeting_attack")) * 0.1)))
+	var damage = max(1, get_effective_ship_upgrade_level("starburst", "salvo"))
+	damage = int(ceil(float(damage) * (1.0 + float(get_effective_ship_upgrade_level("starburst", "targeting_attack")) * 0.1)))
 	return damage
 
 func get_starburst_attack_interval() -> float:
-	return max(3.0, 10.0 - float(get_ship_upgrade_level("starburst", "combat_engines")) * 0.5)
+	return max(3.0, 10.0 - float(get_effective_ship_upgrade_level("starburst", "combat_engines")) * 0.5)
 
 func get_jackal_dps() -> float:
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state == null or not game_state.is_ship_unlocked("jackal"):
 		return 0.0
-	var damage = 2.0 + float(get_ship_upgrade_level("jackal", "cohorts")) * 0.25
-	damage *= 1.0 + float(get_ship_upgrade_level("jackal", "strafe")) * 0.05
+	var damage = 2.0 + float(get_effective_ship_upgrade_level("jackal", "cohorts")) * 0.25
+	damage *= 1.0 + float(get_effective_ship_upgrade_level("jackal", "strafe")) * 0.05
 	return damage
 
 func get_jackal_strafe_speed() -> float:
-	var speed = 1.0 + float(get_ship_upgrade_level("jackal", "strafe")) * 0.05
+	var speed = 1.0 + float(get_effective_ship_upgrade_level("jackal", "strafe")) * 0.05
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and int(game_state.get_passive_level("jackal_speed")) > 0:
 		speed *= 1.5
 	return speed
 
 func get_jackal_recovery_per_second() -> float:
-	var recovery = 1.0 + float(get_ship_upgrade_level("jackal", "rations"))
-	recovery *= 1.0 + float(get_ship_upgrade_level("jackal", "stimpack")) * 0.05
+	var recovery = 1.0 + float(get_effective_ship_upgrade_level("jackal", "rations"))
+	recovery *= 1.0 + float(get_effective_ship_upgrade_level("jackal", "stimpack")) * 0.05
 	return recovery
 
 func get_ravager_damage() -> int:
-	return 10 + get_ship_upgrade_level("ravager", "material") * 5
+	return 10 + get_effective_ship_upgrade_level("ravager", "material") * 5
 
 func get_ravager_interval() -> float:
-	return max(2.0, 10.0 * pow(0.98, float(get_ship_upgrade_level("ravager", "magnetic_lining"))))
+	return max(2.0, 10.0 * pow(0.98, float(get_effective_ship_upgrade_level("ravager", "magnetic_lining"))))
 
 func get_additional_battle_ships() -> Array[Dictionary]:
 	var game_state = get_node_or_null("/root/GameState")
@@ -1567,7 +1538,7 @@ func get_extended_battle_stats() -> Dictionary:
 		"ravager_unlocked": ravager_unlocked,
 		"ravager_damage": get_ravager_damage(),
 		"ravager_interval": get_ravager_interval(),
-		"ravager_impact_ratio": float(get_ship_upgrade_level("ravager", "impact_radius")) * 0.05,
+		"ravager_impact_ratio": float(get_effective_ship_upgrade_level("ravager", "impact_radius")) * 0.05,
 		"ravager_siege": ravager_unlocked and int(game_state.get_passive_level("ravager_siege")) > 0,
 		"ravager_cracking": ravager_unlocked and int(game_state.get_passive_level("ravager_cracking_rounds")) > 0,
 		"ravager_polarised": ravager_unlocked and int(game_state.get_passive_level("ravager_polarised_material")) > 0
@@ -1591,7 +1562,7 @@ func get_global_ore_multiplier() -> float:
 	var game_state = get_node_or_null("/root/GameState")
 	var multiplier = 1.0 + float(refining_level) * REFINING_BONUS_PER_LEVEL
 	if game_state and game_state.has_method("is_ship_unlocked") and game_state.is_ship_unlocked("refinery"):
-		var furnace_bonus = float(get_ship_upgrade_level("refinery", "furnace")) * 0.0012
+		var furnace_bonus = float(get_effective_ship_upgrade_level("refinery", "furnace")) * 0.0012
 		if int(game_state.get_passive_level("refinery_heavy_furnaces")) > 0:
 			furnace_bonus *= 2.0
 		multiplier += furnace_bonus
@@ -1604,7 +1575,7 @@ func get_ship_ore_multiplier(ship_key: String) -> float:
 	var multiplier = get_global_ore_multiplier()
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and game_state.is_ship_unlocked("nelson") and Catalog.get_category(ship_key) == "civilian":
-		multiplier *= 1.0 + float(get_ship_upgrade_level("nelson", "local_fm")) * 0.025
+		multiplier *= 1.0 + float(get_effective_ship_upgrade_level("nelson", "local_fm")) * 0.025
 	return multiplier
 
 func get_drone_reconfiguration_multiplier() -> float:
@@ -1644,7 +1615,7 @@ func get_refinery_stat_value(stat_key: String):
 		"shield":
 			modifier_stat = ShipProfile.STAT_SHIELD
 		"global_income_bonus":
-			base_value = 0.0012 * float(get_ship_upgrade_level("refinery", "furnace"))
+			base_value = 0.0012 * float(get_effective_ship_upgrade_level("refinery", "furnace"))
 			modifier_stat = ShipProfile.STAT_GLOBAL_INCOME_BONUS
 	return resolve_ship_stat(&"refinery", modifier_stat, base_value)
 
@@ -1663,8 +1634,10 @@ func get_hold_click_rate() -> float:
 
 func get_input_rate_level() -> int:
 	var input_rate_level = click_multiplier_level
-	input_rate_level += get_ship_upgrade_level("kradle", "input_rate")
-	input_rate_level += get_ship_upgrade_level("drone_carrier", "input_rate")
+	input_rate_level += get_effective_ship_upgrade_level("kradle", "input_rate")
+	input_rate_level += get_effective_ship_upgrade_level("drone_carrier", "input_rate")
+	for ship_key in ["minotard", "tobias", "fruegal"]:
+		input_rate_level += get_effective_ship_upgrade_level(ship_key, "input_rate")
 	return max(0, input_rate_level)
 
 func _try_consume_click(is_held: bool = false) -> bool:
@@ -1682,13 +1655,19 @@ func _try_consume_click(is_held: bool = false) -> bool:
 
 func get_speed() -> float:
 	var speed = BASE_SPEED + speed_level * DRONE_SPEED_PER_LEVEL
-	speed += float(get_ship_upgrade_level("gethica", "drone_fc")) * 0.5
+	speed += float(get_effective_ship_upgrade_level("gethica", "drone_fc")) * 0.5
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and game_state.has_method("get_passive_level"):
 		if int(game_state.get_passive_level("drone_ion_thrusts")) > 0:
 			speed *= 3.0
 	speed *= get_drone_reconfiguration_multiplier()
 	return max(0.0, resolve_ship_stat(&"mining_drone", ShipProfile.STAT_MOVE_SPEED, speed))
+
+func _migrate_mining_ship_upgrades(ship_key: String, saved_levels: Dictionary) -> Dictionary:
+	var levels = saved_levels.duplicate()
+	if ship_key == "minotard" and not levels.has("input_rate") and levels.has("cargo_capacity"):
+		levels["input_rate"] = levels["cargo_capacity"]
+	return levels
 
 func get_ship_upgrade_level(ship_key: String, stat_key: String) -> int:
 	if not ship_upgrade_levels.has(ship_key):
@@ -1701,8 +1680,6 @@ func get_ship_upgrade_level(ship_key: String, stat_key: String) -> int:
 func apply_dev_ship_toggle(ship_key: String, enabled: bool) -> void:
 	ship_operation_positions.erase(ship_key)
 	ship_operation_targets.erase(ship_key)
-	ship_operation_cargo.erase(ship_key)
-	ship_operation_returning.erase(ship_key)
 	ship_income_timers.erase(ship_key)
 	var parent = get_parent()
 	if parent and parent.has_node("Drones"):
@@ -1721,6 +1698,57 @@ func apply_dev_ship_toggle(ship_key: String, enabled: bool) -> void:
 func get_ship_upgrade_cap(ship_key: String, stat_key: String) -> int:
 	return get_ore_upgrade_cap("%s_%s" % [ship_key, stat_key])
 
+func get_effective_ship_levels(ship_key: String, added_stat: String = "") -> Dictionary:
+	var purchased: Dictionary = ship_upgrade_levels.get(ship_key, {}).duplicate()
+	if purchased.has(added_stat):
+		purchased[added_stat] += 1
+	var caps := {}
+	for stat in purchased:
+		caps[stat] = get_ship_upgrade_cap(ship_key, stat)
+	return Overflow.resolve(ship_key, purchased, caps)
+
+func get_effective_ship_upgrade_level(ship_key: String, stat_key: String) -> float:
+	var game_state = get_node_or_null("/root/GameState")
+	if game_state and not game_state.is_ship_unlocked(ship_key):
+		return 0.0
+	var purchased: Dictionary = ship_upgrade_levels.get(ship_key, {})
+	var level = float(purchased.get(stat_key, 0.0))
+	# Most ships never overflow; avoid resolving every upgrade on every frame.
+	for key in purchased:
+		if float(purchased[key]) > Overflow.hard_cap(ship_key, key):
+			level = float(get_effective_ship_levels(ship_key).get(stat_key, 0.0))
+			break
+	# Craft and node counts accumulate fractional credit before creating a unit.
+	if stat_key in ["participants", "dyson_capacity", "trader_capacity", "fighter_bays", "command_capacity", "drone_command_capacity", "vacuum_command_capacity", "matilda_array"]:
+		return floor(level + 0.000001)
+	return level
+
+func get_ship_upgrade_gains(ship_key: String, stat_key: String) -> Dictionary:
+	var before = get_effective_ship_levels(ship_key)
+	var after = get_effective_ship_levels(ship_key, stat_key)
+	var gains := {}
+	for key in after:
+		var gain = float(after[key]) - float(before[key])
+		if gain > 0.000001:
+			gains[key] = gain
+	return gains
+
+func get_ship_upgrade_warning(ship_key: String, stat_key: String) -> String:
+	var cap = Overflow.hard_cap(ship_key, stat_key)
+	var current = float(get_effective_ship_levels(ship_key).get(stat_key, 0.0))
+	if current + 1.0 < cap:
+		return ""
+	var gains = get_ship_upgrade_gains(ship_key, stat_key)
+	var recipients: Array[String] = []
+	for key in gains:
+		if key != stat_key:
+			recipients.append("%s +%.3f levels" % [str(key).capitalize(), float(gains[key])])
+	if gains.is_empty():
+		return "Hard cap reached. All other upgrades are capped; purchase unavailable."
+	if not recipients.is_empty():
+		return "Hard cap reached or crossed. Overflow: %s. Cost includes receiving upgrades." % ", ".join(recipients)
+	return "This purchase reaches the hard cap. Further levels will overflow into other available upgrades."
+
 func get_ship_upgrade_cost(ship_key: String, stat_key: String, level: int = -1) -> int:
 	if not ship_upgrade_levels.has(ship_key):
 		return 0
@@ -1729,7 +1757,15 @@ func get_ship_upgrade_cost(ship_key: String, stat_key: String, level: int = -1) 
 		return 0
 	if level < 0:
 		level = get_ship_upgrade_level(ship_key, stat_key)
-	return int(ceil(float(base_cost) * pow(ORE_COST_MULTIPLIER, float(level)) * get_ore_cost_multiplier()))
+	var cost = float(base_cost) * pow(ORE_COST_MULTIPLIER, float(level))
+	if level == get_ship_upgrade_level(ship_key, stat_key):
+		var effective = get_effective_ship_levels(ship_key)
+		var gains = get_ship_upgrade_gains(ship_key, stat_key)
+		var receiver_cost = 0.0
+		for key in gains:
+			receiver_cost += float(gains[key]) * Catalog.get_ore_base_cost(ship_key, key) * pow(ORE_COST_MULTIPLIER, float(effective[key]))
+		cost = max(cost, receiver_cost)
+	return int(ceil(cost * get_ore_cost_multiplier()))
 
 func upgrade_ship_stat(ship_key: String, stat_key: String) -> bool:
 	var game_state = get_node_or_null("/root/GameState")
@@ -1742,6 +1778,9 @@ func upgrade_ship_stat(ship_key: String, stat_key: String) -> bool:
 	var replacing_drone = adds_mining_drone and has_missing_owned_drones(ship_key)
 	if not replacing_drone and level >= get_ship_upgrade_cap(ship_key, stat_key):
 		return false
+	if not replacing_drone and get_ship_upgrade_gains(ship_key, stat_key).is_empty():
+		return false
+	var notice = get_ship_upgrade_warning(ship_key, stat_key)
 	var cost = get_ship_upgrade_cost(ship_key, stat_key, 0 if replacing_drone else level)
 	if total_resources < cost:
 		return false
@@ -1758,6 +1797,8 @@ func upgrade_ship_stat(ship_key: String, stat_key: String) -> bool:
 			configure_drone(drone)
 	emit_signal("resource_changed", total_resources)
 	emit_signal("upgrades_changed")
+	if not notice.is_empty():
+		emit_signal("upgrade_notice", notice)
 	return true
 
 func get_companion_upgrade_level(companion_id: String, stat_key: String) -> int:
@@ -1813,7 +1854,7 @@ func _get_ship_mining_drone_stat(ship_key: String) -> String:
 	return ""
 
 func get_hammond_damage() -> float:
-	return HAMMOND_BASE_DAMAGE + float(get_ship_upgrade_level("hammond", "lori_cannons"))
+	return HAMMOND_BASE_DAMAGE + float(get_effective_ship_upgrade_level("hammond", "lori_cannons"))
 
 func get_hammond_max_hp() -> int:
 	var game_state = get_node_or_null("/root/GameState")
@@ -1824,10 +1865,10 @@ func get_hammond_damage_reduction() -> float:
 	return 0.05 if game_state and int(game_state.get_passive_level("hammond_reinforced_framework")) > 0 else 0.0
 
 func get_hammond_interval() -> float:
-	return max(HAMMOND_MIN_INTERVAL, HAMMOND_BASE_INTERVAL * pow(0.99, float(get_ship_upgrade_level("hammond", "arming_time"))))
+	return max(HAMMOND_MIN_INTERVAL, HAMMOND_BASE_INTERVAL * pow(0.99, float(get_effective_ship_upgrade_level("hammond", "arming_time"))))
 
 func get_fighter_drone_count() -> int:
-	var count = get_ship_upgrade_level("drone_carrier", "fighter_bays")
+	var count = get_effective_ship_upgrade_level("drone_carrier", "fighter_bays")
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and int(game_state.get_passive_level("hammond_fighter_bays")) > 0:
 		count += 5
@@ -1843,23 +1884,23 @@ func get_ambrossa_income_amount() -> float:
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state == null or not game_state.is_ship_unlocked("ambrossa"):
 		return 0.0
-	var workshops = get_ship_upgrade_level("ambrossa", "workshops")
+	var workshops = get_effective_ship_upgrade_level("ambrossa", "workshops")
 	if workshops <= 0:
 		return 0.0
 	var income = float(workshops) * 5.0
-	income *= 1.0 + float(get_ship_upgrade_level("ambrossa", "quality_assurance")) * AMBROSSA_QUALITY_BONUS
+	income *= 1.0 + float(get_effective_ship_upgrade_level("ambrossa", "quality_assurance")) * AMBROSSA_QUALITY_BONUS
 	if int(game_state.get_passive_level("ambrossa_market_demands")) > 0:
 		income *= 2.0
 	return income * get_ship_ore_multiplier("ambrossa")
 
 func get_ambrossa_income_interval() -> float:
-	var reputation_level = get_ship_upgrade_level("ambrossa", "trader_reputation")
+	var reputation_level = get_effective_ship_upgrade_level("ambrossa", "trader_reputation")
 	return max(AMBROSSA_MIN_INTERVAL, pow(1.0 - AMBROSSA_REPUTATION_REDUCTION, float(reputation_level)))
 
 func get_flagship_speed() -> float:
 	var speed = BASE_FLAGSHIP_SPEED + flagship_speed_level * FLAGSHIP_SPEED_PER_LEVEL
-	speed += float(get_ship_upgrade_level("gethica", "local_sfc"))
-	speed += float(get_ship_upgrade_level("parallax", "coordinator")) * 2.0
+	speed += float(get_effective_ship_upgrade_level("gethica", "local_sfc"))
+	speed += float(get_effective_ship_upgrade_level("parallax", "coordinator")) * 2.0
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and game_state.has_method("get_flagship_speed_multiplier"):
 		speed *= float(game_state.get_flagship_speed_multiplier())
@@ -1902,16 +1943,16 @@ func get_drone_mining_interval_at(world_position: Vector2) -> float:
 	var mining_speed = get_mining_speed()
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and game_state.is_ship_unlocked("atlas") and world_position.distance_to(get_ship_world_position("atlas")) <= 2000.0:
-		mining_speed *= 1.0 + float(get_ship_upgrade_level("atlas", "industrial_link")) * 0.10
+		mining_speed *= 1.0 + float(get_effective_ship_upgrade_level("atlas", "industrial_link")) * 0.10
 	if game_state and game_state.is_ship_unlocked("parallax") and world_position.distance_to(get_ship_world_position("parallax")) <= 2000.0:
-		mining_speed *= 1.0 + float(get_ship_upgrade_level("parallax", "booster")) * 0.02
+		mining_speed *= 1.0 + float(get_effective_ship_upgrade_level("parallax", "booster")) * 0.02
 	return 1.0 / max(0.1, mining_speed)
 
 func get_refining_multiplier() -> float:
 	return 1.0 + float(refining_level) * REFINING_BONUS_PER_LEVEL
 
 func get_capacity() -> int:
-	var base_capacity = float(BASE_CAPACITY + capacity_level * CARRY_CAPACITY_PER_LEVEL + get_ship_upgrade_level("atlas", "storage_bins") * 10)
+	var base_capacity = float(BASE_CAPACITY + capacity_level * CARRY_CAPACITY_PER_LEVEL + get_effective_ship_upgrade_level("atlas", "storage_bins") * 10)
 	base_capacity *= get_drone_reconfiguration_multiplier()
 	return max(0, int(round(resolve_ship_stat(&"mining_drone", ShipProfile.STAT_CARRY_CAPACITY, base_capacity))))
 
@@ -1919,7 +1960,7 @@ func configure_drone(drone: Node) -> void:
 	if drone == null:
 		return
 	drone.speed = get_speed()
-	drone.outbound_speed_multiplier = 1.0 + float(get_ship_upgrade_level("drone_carrier", "acceleration")) * 0.005
+	drone.outbound_speed_multiplier = 1.0 + float(get_effective_ship_upgrade_level("drone_carrier", "acceleration")) * 0.005
 	drone.mining_amount = get_mining_amount()
 	drone.mine_interval = get_mining_interval()
 	drone.mining_reward_multiplier = get_global_ore_multiplier() * get_drone_reconfiguration_multiplier()
@@ -1960,7 +2001,7 @@ func regenerate_asteroid_field(count: int = -1) -> void:
 	spawn_asteroids(count)
 	var game_state = get_node_or_null("/root/GameState")
 	if game_state and game_state.is_ship_unlocked("elysium_air"):
-		var monolith_income = get_ship_upgrade_level("elysium_air", "monolith") * 5000
+		var monolith_income = get_effective_ship_upgrade_level("elysium_air", "monolith") * 5000
 		if monolith_income > 0:
 			add_resources(float(monolith_income) * get_ship_ore_multiplier("elysium_air"), "elysium_air")
 
@@ -1980,7 +2021,7 @@ func get_visual_subcraft() -> Array[Dictionary]:
 			var angle = ship_animation_time * 0.8 * get_drone_reconfiguration_multiplier() + TAU * float(index) / max(1.0, float(fighter_count))
 			visuals.append({"position": get_ship_world_position("drone_carrier") + Vector2(cos(angle), sin(angle)) * 190.0, "color": Color("ff8d78"), "radius": 42.0, "kind": "fighter"})
 	if game_state.is_ship_unlocked("tobias"):
-		var vacuum_count = (5 if int(game_state.get_passive_level("tobias_vacuum_drone_bays")) > 0 else 0) + get_ship_upgrade_level("boschore", "vacuum_command_capacity")
+		var vacuum_count = (5 if int(game_state.get_passive_level("tobias_vacuum_drone_bays")) > 0 else 0) + get_effective_ship_upgrade_level("boschore", "vacuum_command_capacity")
 		for index in range(min(24, vacuum_count)):
 			var angle = -ship_animation_time * 0.65 * get_drone_reconfiguration_multiplier() + TAU * float(index) / max(1.0, float(vacuum_count))
 			visuals.append({"position": get_ship_world_position("tobias") + Vector2(cos(angle), sin(angle)) * 150.0, "color": Color("78d8ef"), "radius": 38.0, "kind": "vacuum"})
@@ -1988,15 +2029,15 @@ func get_visual_subcraft() -> Array[Dictionary]:
 		for racer in racer_states:
 			visuals.append({"position": racer.get("position", get_ship_world_position("merlinda")), "direction": racer.get("direction", Vector2.RIGHT), "speed_stat": racer.get("base_speed", 250.0), "color": Color("f4d06f"), "radius": 45.0, "kind": "racer"})
 	if game_state.is_ship_unlocked("stapledon"):
-		var dyson_count = min(24, get_ship_upgrade_level("stapledon", "dyson_capacity"))
+		var dyson_count = min(24, get_effective_ship_upgrade_level("stapledon", "dyson_capacity"))
 		for index in range(dyson_count):
 			var angle = ship_animation_time * 0.35 * get_drone_reconfiguration_multiplier() + TAU * float(index) / max(1.0, float(dyson_count))
 			visuals.append({"position": _get_sun_world_position() + Vector2(cos(angle), sin(angle)) * 1200.0, "color": Color("ffe28a"), "radius": 48.0, "kind": "dyson"})
 	var trader_count = 0
 	if game_state.is_ship_unlocked("tarrip"):
-		trader_count += get_ship_upgrade_level("tarrip", "trader_capacity")
+		trader_count += get_effective_ship_upgrade_level("tarrip", "trader_capacity")
 	if game_state.is_ship_unlocked("elysium_air"):
-		trader_count += get_ship_upgrade_level("elysium_air", "trader_capacity")
+		trader_count += get_effective_ship_upgrade_level("elysium_air", "trader_capacity")
 	var unlocked_positions: Array[Vector2] = []
 	for ship_key in Catalog.get_ship_ids():
 		if game_state.is_ship_unlocked(ship_key):
@@ -2177,7 +2218,7 @@ func click_mine(asteroid: Node, is_held: bool = false) -> float:
 	if harvested <= 0:
 		return 0
 	var gained = float(harvested) * get_refinery_click_multiplier() * get_ship_ore_multiplier("flagship")
-	var optimizer_level = get_ship_upgrade_level("atlas", "optimizer_lens")
+	var optimizer_level = get_effective_ship_upgrade_level("atlas", "optimizer_lens")
 	if optimizer_level > 0 and asteroid.position.distance_to(get_ship_world_position("atlas")) <= 2000.0:
 		gained *= 1.0 + float(optimizer_level)
 	gained = _apply_romius_income_systems(gained)
@@ -2201,7 +2242,7 @@ func _apply_romius_income_systems(amount: float) -> float:
 	var completed_cycles = int(floor(romius_cycle_progress / 1000.0))
 	if completed_cycles > 0:
 		romius_cycle_progress -= float(completed_cycles) * 1000.0
-		bonus += float(completed_cycles * get_ship_upgrade_level("refinery", "cycling") * 100)
+		bonus += float(completed_cycles * get_effective_ship_upgrade_level("refinery", "cycling") * 100)
 	return amount + bonus
 
 func set_asteroid_priority(ast: Node, delta: int) -> void:
@@ -2441,6 +2482,7 @@ func load_game() -> void:
 	var saved_ship_upgrades: Dictionary = state.get("ship_upgrades", {})
 	for ship_key in ship_upgrade_levels:
 		var saved_levels: Dictionary = saved_ship_upgrades.get(ship_key, {})
+		saved_levels = _migrate_mining_ship_upgrades(ship_key, saved_levels)
 		for stat_key in ship_upgrade_levels[ship_key]:
 			ship_upgrade_levels[ship_key][stat_key] = max(0, int(saved_levels.get(stat_key, 0)))
 	var saved_companion_upgrades: Dictionary = state.get("companion_upgrades", {})

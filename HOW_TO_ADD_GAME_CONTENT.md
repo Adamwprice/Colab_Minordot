@@ -139,7 +139,7 @@ Ship command upgrades can control how many drones exist. The drone's own upgrade
 {"label": "Overdrive", "key": "new_ship_overdrive", "description": "Double engine speed.", "difficulty": 4.0}
 ```
 
-Use a unique key beginning with the ship ID. The card, battle button, battle scaling, victory state, save data, and prestige reset are generated automatically.
+Use a unique key beginning with the ship ID. The card, battle button, battle scaling, permanent victory state, and save data are generated automatically.
 
 ### 2. Implement the reward
 
@@ -151,7 +151,7 @@ if game_state and int(game_state.get_passive_level("new_ship_overdrive")) > 0:
 	speed *= 2.0
 ```
 
-Research effects are active after one victory and reset on prestige. Repeated Upgrade Cap battles are handled separately by the generated cap card.
+One-time research effects are permanent after one victory, and their battles remain completed across prestige. Only repeated Upgrade Cap research resets on prestige.
 
 ### 3. Show ship research under a drone
 
@@ -173,11 +173,13 @@ Use the exact same key in both places. The UI will move that card from the ship 
 
 ## Quick Test Checklist
 
+Ship upgrade overflow is defined in `scripts/ship_upgrade_overflow.gd`. Register a hard cap only when every effect of an upgrade stops improving. Excess levels are shared equally among the ship's other upgrades with remaining capacity, preserving fractions; craft counts use whole accumulated levels. Runtime effects should read `get_effective_ship_upgrade_level()`, while purchase levels use `get_ship_upgrade_level()`. Overflow is derived from saved purchase levels and resets with ore upgrades on prestige. Tooltips preview recipients and prices; purchases cost at least the weighted current price of the receiving upgrades.
+
 1. Use the prestige menu's dev toggle to unlock only the new ship.
 2. Confirm the ship appears in the correct category tab.
 3. Buy every ore upgrade once and confirm only the intended ship or drone changes.
 4. Start its research battle and confirm victory activates the effect.
 5. Save and reload to confirm levels remain.
-6. Prestige and confirm ore and research levels reset.
+6. Prestige and confirm ore upgrades and Upgrade Cap research reset, while one-time research stays active and completed.
 7. Test mining and battle scenes for script errors.
 

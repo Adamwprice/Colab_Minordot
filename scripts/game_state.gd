@@ -610,11 +610,9 @@ func reset_for_prestige(force: bool = false) -> bool:
 		cap_levels[upgrade] = 0
 		pending_cap_levels[upgrade] = 0
 	for upgrade in passive_levels:
-		passive_levels[upgrade] = 0
-		pending_passive_levels[upgrade] = 0
-	development_protocol_enabled = false
-	fleet_maneuver_enabled = false
-	research_card_unlocks.clear()
+		pending_passive_levels[upgrade] = passive_levels[upgrade]
+	for upgrade in cap_levels:
+		research_card_unlocks.erase(upgrade)
 	research_battle_attempts.clear()
 	research_hunt_count = 0
 	_synchronize_prestige_rewards()

@@ -65,11 +65,11 @@ const SHIPS := {
 	},
 	"minotard": {
 		"rank": 3, "name": "Minotard", "category": "support",
-		"description": "A snub-nosed mining barge with twin forward stripping arms.",
+		"description": "A snub-nosed mining barge with twin forward stripping arms. Mines 10 ore per cycle before upgrades directly into fleet storage.",
 		"ore": [
 			{"label": "MINING ARRAY", "stat": "mining_array", "cost": 3000, "effect": "+10 mined per cycle"},
 			{"label": "OPTIMISED MINING", "stat": "optimized_mining", "cost": 2275, "effect": "+5% mining speed"},
-			{"label": "CARGO CAPACITY", "stat": "cargo_capacity", "cost": 125, "effect": "+50 cargo"},
+			{"label": "INPUT RATE", "stat": "input_rate", "cost": 125, "effect": "+1 held and manual input/sec"},
 			{"label": "SPEED", "stat": "speed", "cost": 100, "effect": "+10 movement speed"}
 		],
 		"research": [
@@ -199,10 +199,11 @@ const SHIPS := {
 	},
 	"tobias": {
 		"rank": 12, "name": "Tobias", "category": "utility",
-		"description": "A cylindrical gas harvester with a dedicated collection nozzle.",
+		"description": "A cylindrical gas harvester collecting directly into fleet storage.",
 		"ore": [
 			{"label": "COMPRESSOR", "stat": "compressor", "cost": 3000, "effect": "+5% gas collection speed"},
 			{"label": "DUAL CHAMBER", "stat": "dual_chamber", "cost": 5000, "effect": "+10 gas per cycle"},
+			{"label": "INPUT RATE", "stat": "input_rate", "cost": 125, "effect": "+1 held and manual input/sec"},
 			{"label": "ELONGATION", "stat": "elongation", "cost": 2270, "effect": "+100 gas collection range"},
 			{"label": "SPEED", "stat": "speed", "cost": 800, "effect": "+10 movement speed"}
 		],
@@ -257,13 +258,14 @@ const SHIPS := {
 	},
 	"fruegal": {
 		"rank": 16, "name": "Fruegal", "category": "civilian",
-		"description": "A broad mining ship capable of working several mineral and gas nodes.",
+		"description": "A broad mining ship collecting from several mineral and gas nodes directly into fleet storage.",
 		"ore": [
 			{"label": "DRONE COMMAND", "stat": "drone_command_capacity", "cost": 500, "effect": "+1 mining drone"},
 			{"label": "VACUUM COMMAND", "stat": "vacuum_command_capacity", "cost": 1550, "effect": "+1 vacuum drone"},
 			{"label": "ADJACENTOR", "stat": "adjacentor", "cost": 2000, "effect": "+2% speed per nearby node"},
 			{"label": "DIAMOND TIP", "stat": "diamond_tip", "cost": 2600, "effect": "+5% mining speed"},
 			{"label": "MICRON LASER", "stat": "micron_laser", "cost": 2800, "effect": "+5 mined per cycle"},
+			{"label": "INPUT RATE", "stat": "input_rate", "cost": 125, "effect": "+1 held and manual input/sec"},
 			{"label": "FUNNELING", "stat": "funneling", "cost": 1800, "effect": "+100 work range"},
 			{"label": "SPEED", "stat": "speed", "cost": 900, "effect": "+10 movement speed"}
 		],
