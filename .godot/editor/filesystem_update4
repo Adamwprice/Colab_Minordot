@@ -1,6 +1,0 @@
-res://scripts/resource_manager.gd
-res://scripts/ship_catalog.gd
-res://scenes/Main.tscn
-res://tests/mining_ships_test.gd
-res://scripts/game_state.gd
-res://scripts/ui.gd
