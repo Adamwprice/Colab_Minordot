@@ -6,13 +6,15 @@ This is the short workflow for adding or changing game content.
 
 | File | Purpose |
 | --- | --- |
-| `scripts/ship_catalog.gd` | Names, prestige ranks, costs, ore upgrades, research cards, categories, and descriptions. |
-| `scripts/resource_manager.gd` | Mining, income, movement, drone behavior, ore-upgrade effects, and saving. |
-| `scripts/battle.gd` | Battle behavior, attacks, health, and combat effects. |
-| `scripts/map.gd` | Ship and drone placeholder visuals. |
-| `scripts/game_state.gd` | Prestige, research victories, unlocks, and permanent stat modifiers. |
+| `scripts/data/ship_catalog.gd` | Shared prestige costs, lookup helpers, and the combined ship catalog. |
+| `scripts/data/ships/*.gd` | Ship definitions grouped into Civilian, Military, Support, Utility, and foundation data. |
+| `scripts/data/research/research_requirements.gd` | Ore-level requirements for starting research battles. |
+| `scripts/systems/mining/resource_manager.gd` | Mining, income, movement, drone behavior, ore-upgrade effects, and saving. |
+| `scripts/systems/combat/battle.gd` | Battle behavior, attacks, health, and combat effects. |
+| `scripts/ui/map.gd` | Ship and drone placeholder visuals. |
+| `scripts/core/game_state.gd` | Prestige, research victories, unlocks, and permanent stat modifiers. |
 
-The catalog creates the UI and stores levels automatically. Gameplay effects still need to be implemented in `resource_manager.gd` or `battle.gd`.
+The catalog creates the UI and stores levels automatically. Gameplay effects still need to be implemented in the mining or combat system.
 
 ## Add A Ship
 
@@ -26,9 +28,9 @@ In `PRESTIGE_COSTS` inside `ship_catalog.gd`, add the ship's prestige rank and o
 
 Every ship rank must have a matching prestige cost.
 
-### 2. Add the ship to `SHIPS`
+### 2. Add the ship to its category file
 
-Use a unique lowercase ID. Do not change this ID later because saves use it.
+Open the matching file in `scripts/data/ships`, then add the ship to its `SHIPS` dictionary. Use a unique lowercase ID. Do not change this ID later because saves use it.
 
 ```gdscript
 "new_ship": {
@@ -87,7 +89,7 @@ The catalog's `offset` controls the ship's place in the mining-scene formation.
 
 Only create a `ShipProfile` resource when the ship must use the category/role modifier system.
 
-1. Add `scenes/ship_profiles/new_ship.tres`.
+1. Add `scenes/resources/ship_profiles/new_ship.tres`.
 2. Give it the same `ship_id` as the catalog.
 3. Register it in `SHIP_PROFILES` in `game_state.gd`.
 
@@ -163,6 +165,74 @@ Add the research card to the parent ship's `research` list first. Then reference
 
 Use the exact same key in both places. The UI will move that card from the ship row to the drone row.
 
+## Design Endless Ore Upgrades
+
+Avoid formulas such as this for an endlessly expandable upgrade:
+
+```gdscript
+interval = max(0.1, base_interval - level * 0.05)
+```
+
+Once the minimum is reached, later levels do nothing. Use a formula that continues improving instead.
+
+### Output, damage, range, or capacity
+
+Use additive growth:
+
+```gdscript
+value = base_value + effective_level * amount_per_level
+```
+
+### Timers, reload speed, or marker waiting
+
+Convert levels into rate and calculate the interval from that rate:
+
+```gdscript
+interval = base_interval / (1.0 + effective_level * 0.12)
+```
+
+This is the recommended pattern for Racer Awareness. Every level helps, but later levels give a smaller absolute time reduction and the interval never reaches zero.
+
+### Percentage bonuses
+
+Use multiplicative growth when the effect may grow forever:
+
+```gdscript
+multiplier = pow(1.05, effective_level)
+```
+
+Use an approaching curve when the percentage must stay below a limit:
+
+```gdscript
+bonus = maximum_bonus * (1.0 - exp(-0.08 * effective_level))
+```
+
+### Counts and unlocks
+
+Use whole levels for ships, drones, projectiles, and other objects:
+
+```gdscript
+drone_count = int(floor(effective_level))
+```
+
+Fractional effective levels can still accumulate until another whole object is earned.
+
+### True hard limits
+
+Only add a limit to `scripts/systems/upgrades/ship_upgrade_overflow.gd` when every effect of that upgrade must stop improving for technical or gameplay reasons. Excess levels are then distributed among that ship's other upgrades with available capacity.
+
+Runtime effects should read:
+
+```gdscript
+get_effective_ship_upgrade_level("new_ship", "engine")
+```
+
+Purchase levels and UI costs should read:
+
+```gdscript
+get_ship_upgrade_level("new_ship", "engine")
+```
+
 ## Change Existing Content
 
 - Change names, costs, descriptions, ranks, and categories in `ship_catalog.gd`.
@@ -172,8 +242,6 @@ Use the exact same key in both places. The UI will move that card from the ship 
 - Ship ore rows belong to ships. Companion ore rows belong to drone types.
 
 ## Quick Test Checklist
-
-Ship upgrade overflow is defined in `scripts/ship_upgrade_overflow.gd`. Register a hard cap only when every effect of an upgrade stops improving. Excess levels are shared equally among the ship's other upgrades with remaining capacity, preserving fractions; craft counts use whole accumulated levels. Runtime effects should read `get_effective_ship_upgrade_level()`, while purchase levels use `get_ship_upgrade_level()`. Overflow is derived from saved purchase levels and resets with ore upgrades on prestige. Tooltips preview recipients and prices; purchases cost at least the weighted current price of the receiving upgrades.
 
 1. Use the prestige menu's dev toggle to unlock only the new ship.
 2. Confirm the ship appears in the correct category tab.

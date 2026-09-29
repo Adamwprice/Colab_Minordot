@@ -1,0 +1,10 @@
+# Godot-generated project data
+.godot/
+
+# Local exports
+builds/
+
+# Temporary and operating-system files
+*.tmp
+.DS_Store
+Thumbs.db
